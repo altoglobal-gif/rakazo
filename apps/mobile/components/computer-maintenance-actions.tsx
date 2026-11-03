@@ -1,4 +1,3 @@
-import { MenuView } from "@expo/ui/community/menu";
 import type { ComputerStatus } from "@rakazo/contracts";
 import type { NativeStackNavigationOptions } from "expo-router";
 import { useNavigation } from "expo-router";
@@ -7,9 +6,10 @@ import { Alert, Text, View } from "react-native";
 import { rpc } from "../lib/api";
 import { computerUpdates } from "../lib/computer-updates";
 import { useI18n } from "../lib/i18n";
-import { useMobileTokens, useResolvedAppearance } from "../lib/native";
+import { useMobileTokens } from "../lib/native";
 import { iosAtLeast } from "../lib/native-controls";
 import { errorText } from "../lib/user-error";
+import { NativeMenu } from "./native-menu";
 import { NativeSymbol } from "./native-symbol";
 
 type Action = "stop" | "recover" | "reset" | "update";
@@ -25,7 +25,6 @@ export function ComputerMaintenanceActions({
 }) {
   const { t } = useI18n();
   const tokens = useMobileTokens();
-  const scheme = useResolvedAppearance();
   const navigation = useNavigation();
   const [pending, setPending] = useState<Action | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -156,36 +155,19 @@ export function ComputerMaintenanceActions({
   return (
     <View>
       {!iosAtLeast(26) ? (
-        <MenuView
-          colorScheme={scheme}
+        <NativeMenu
           title={t("More computer actions")}
-          actions={actions.map((action) =>
-            action.explanation
-              ? {
-                  id: action.id,
-                  title: action.explanation,
-                  displayInline: true,
-                  subactions: [
-                    {
-                      id: action.id,
-                      title: action.title,
-                      attributes: { destructive: action.destructive, disabled: busy },
-                    },
-                  ],
-                }
-              : {
-                  id: action.id,
-                  title: action.title,
-                  attributes: { destructive: action.destructive, disabled: busy },
-                },
-          )}
-          onPressAction={({ nativeEvent }) =>
-            actions.find((action) => action.id === nativeEvent.event)?.onPress()
-          }
+          actions={actions.map((action) => ({
+            id: action.id,
+            title: action.title,
+            description: action.explanation,
+            attributes: { destructive: action.destructive, disabled: busy },
+          }))}
+          onPressAction={(event) => actions.find((action) => action.id === event)?.onPress()}
         >
           <View
-            accessibilityRole="button"
-            accessibilityLabel={t("More computer actions")}
+            accessibilityElementsHidden
+            importantForAccessibility="no-hide-descendants"
             style={{ alignSelf: "flex-end", padding: 12 }}
           >
             <NativeSymbol
@@ -195,7 +177,7 @@ export function ComputerMaintenanceActions({
               size={22}
             />
           </View>
-        </MenuView>
+        </NativeMenu>
       ) : null}
       {error ? (
         <Text accessibilityRole="alert" style={{ color: tokens.destructive, fontSize: 13 }}>

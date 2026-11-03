@@ -1,5 +1,4 @@
 import type { MenuAction } from "@expo/ui/community/menu";
-import { MenuView } from "@expo/ui/community/menu";
 import type {
   ModelCatalogEntry,
   ModelCredential,
@@ -31,8 +30,9 @@ import { captureApiRequestContext, currentApiBase, rpc } from "../lib/api";
 import { mobileTokens } from "../lib/appearance";
 import { useI18n } from "../lib/i18n";
 import type { ModelPickerRequest } from "../lib/model-picker-selection";
-import { native, useMobileTokens, useResolvedAppearance, useThemedStyles } from "../lib/native";
+import { native, useMobileTokens, useThemedStyles } from "../lib/native";
 import { thinkingLevelLabel } from "../lib/thinking-level";
+import { NativeMenu } from "./native-menu";
 import { NativeSymbol } from "./native-symbol";
 import { SettingsGroup, SettingsRow } from "./settings-group";
 
@@ -588,11 +588,10 @@ export function RowMenuButton({
 }) {
   const { t } = useI18n();
   const tokens = useMobileTokens();
-  const colorScheme = useResolvedAppearance();
   return (
-    <MenuView
-      colorScheme={colorScheme}
+    <NativeMenu
       title={title}
+      accessibilityLabel={t("{name} options", { name: title })}
       actions={
         disabled
           ? actions.map((action) => ({
@@ -601,13 +600,12 @@ export function RowMenuButton({
             }))
           : actions
       }
-      onPressAction={({ nativeEvent }) => onAction(nativeEvent.event)}
+      onPressAction={onAction}
       style={rowMenuStyles.button}
     >
       <View
-        accessibilityRole="button"
-        accessibilityLabel={t("{name} options", { name: title })}
-        accessibilityState={{ disabled }}
+        accessibilityElementsHidden
+        importantForAccessibility="no-hide-descendants"
         style={rowMenuStyles.buttonInner}
       >
         <NativeSymbol
@@ -617,7 +615,7 @@ export function RowMenuButton({
           size={20}
         />
       </View>
-    </MenuView>
+    </NativeMenu>
   );
 }
 
@@ -633,7 +631,6 @@ export function RowMenu({
   onAction: (id: string) => void;
   children: ReactNode;
 }) {
-  const colorScheme = useResolvedAppearance();
   // Native menu hosts size to their contents, so measure outside the host.
   const [width, setWidth] = useState<number>();
   return (
@@ -641,16 +638,15 @@ export function RowMenu({
       onLayout={(event) => setWidth(event.nativeEvent.layout.width)}
       style={rowMenuStyles.fullWidth}
     >
-      <MenuView
+      <NativeMenu
         shouldOpenOnLongPress
-        colorScheme={colorScheme}
         title={title}
         actions={actions}
-        onPressAction={({ nativeEvent }) => onAction(nativeEvent.event)}
+        onPressAction={onAction}
         style={rowMenuStyles.fullWidth}
       >
         <View style={{ width }}>{children}</View>
-      </MenuView>
+      </NativeMenu>
     </View>
   );
 }
