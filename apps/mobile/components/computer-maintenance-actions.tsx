@@ -165,16 +165,20 @@ export function ComputerMaintenanceActions({
           }))}
           onPressAction={(event) => actions.find((action) => action.id === event)?.onPress()}
         >
+          {/* A word, not three dots nobody finds; it sits under the Team/Private picker. */}
           <View
             accessibilityElementsHidden
             importantForAccessibility="no-hide-descendants"
-            style={{ alignSelf: "flex-end", padding: 12 }}
+            style={labelButton(tokens.border)}
           >
+            <Text style={{ color: tokens.foreground, fontSize: 15.5, fontWeight: "500" }}>
+              {t("More computer actions")}
+            </Text>
             <NativeSymbol
-              ios="ellipsis"
-              android="ellipsis-horizontal"
-              color={tokens.foreground}
-              size={22}
+              ios="chevron.down"
+              android="chevron-down"
+              color={tokens.mutedForeground}
+              size={14}
             />
           </View>
         </NativeMenu>
@@ -186,4 +190,19 @@ export function ComputerMaintenanceActions({
       ) : null}
     </View>
   );
+}
+
+/** The bordered, full-width look of a secondary button, without an inner pressable. */
+function labelButton(border: string) {
+  return {
+    marginTop: 12,
+    minHeight: 48,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: border,
+    flexDirection: "row" as const,
+    alignItems: "center" as const,
+    justifyContent: "center" as const,
+    gap: 6,
+  };
 }

@@ -667,13 +667,6 @@ export default function Computer() {
           />
         </View>
       ) : null}
-      {computer ? (
-        <ComputerMaintenanceActions
-          botId={botId ?? ""}
-          computer={computer}
-          onChanged={refreshAfterMaintenance}
-        />
-      ) : null}
       <ComputerModePicker
         // Restacking the row above leaves the native picker at its old measured height; remount it.
         key={stacked ? "stacked" : "row"}
@@ -681,6 +674,13 @@ export default function Computer() {
         disabled={switching || bootPending}
         onChange={(mode) => void setComputerMode(mode)}
       />
+      {computer ? (
+        <ComputerMaintenanceActions
+          botId={botId ?? ""}
+          computer={computer}
+          onChanged={refreshAfterMaintenance}
+        />
+      ) : null}
 
       <Modal
         visible={computerOpen}
