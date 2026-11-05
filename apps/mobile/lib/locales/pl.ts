@@ -824,6 +824,8 @@ export const PL_MESSAGES: Record<string, string> = {
   "Updating…": "Aktualizowanie…",
   Private: "Prywatne",
   Team: "Zespół",
+  "Rotate screen": "Obróć ekran",
+  "Upright screen": "Ekran pionowo",
   "{name} options": "Opcje: {name}",
   "Custom voice…": "Własny głos…",
   "Custom voice": "Własny głos",

@@ -760,6 +760,8 @@ export const ZH_TW_MESSAGES: Record<string, string> = {
     "電腦的磁碟快滿了。請刪除不再需要的建置輸出和快取，以釋放空間。",
   "Tap + to create a bot": "點按 + 建立機器人",
   Team: "團隊",
+  "Rotate screen": "旋轉螢幕",
+  "Upright screen": "直向顯示",
   "Team Computer": "團隊電腦",
   "That doesn’t look like a URL": "這看起來不像 URL",
   "That URL did not look like a Rakazo server": "該地址看起來不是 Rakazo 伺服器",

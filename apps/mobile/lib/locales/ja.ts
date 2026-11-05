@@ -818,6 +818,8 @@ export const JA_MESSAGES: Record<string, string> = {
   "Updating…": "更新中…",
   Private: "プライベート",
   Team: "チーム",
+  "Rotate screen": "画面を回転",
+  "Upright screen": "画面を縦に戻す",
   "Continue in Background": "バックグラウンドで続行",
   "Could not complete action": "操作を完了できませんでした",
   Dismiss: "閉じる",

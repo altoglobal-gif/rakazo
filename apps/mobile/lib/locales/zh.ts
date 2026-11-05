@@ -791,6 +791,8 @@ export const ZH_MESSAGES: Record<string, string> = {
     "电脑的磁盘快满了。请删除不再需要的构建输出和缓存，以释放空间。",
   "Tap + to create a bot": "点按 + 创建 Bot",
   Team: "团队",
+  "Rotate screen": "旋转屏幕",
+  "Upright screen": "竖屏显示",
   "Team Computer": "团队电脑",
   "That doesn’t look like a URL": "这看起来不像 URL",
   "That URL did not look like a Rakazo server": "该地址看起来不是 Rakazo 服务器",

@@ -794,6 +794,8 @@ export const ES_MESSAGES: Record<string, string> = {
   "Update computer": "Actualizar computadora",
   Private: "Privado",
   Team: "Equipo",
+  "Rotate screen": "Girar pantalla",
+  "Upright screen": "Pantalla vertical",
   "Teach a task": "Enseñar una tarea",
   "What result will you demonstrate?": "¿Qué resultado demostrarás?",
   "Start recording": "Iniciar grabación",

@@ -94,6 +94,9 @@ export default function Computer() {
   const [bootFailed, setBootFailed] = useState(false);
   const switching = switchingCount > 0;
   const [computerOpen, setComputerOpen] = useState(false);
+  // The desktop is landscape; on a portrait phone a tap turns the whole screen sideways.
+  const [screenRotated, setScreenRotated] = useState(false);
+  const [screenBox, setScreenBox] = useState<{ width: number; height: number } | null>(null);
   // The keyboard closes on the Release tap, not when the server answers.
   const [releasing, setReleasing] = useState(false);
   const autoBooted = useRef<string | null>(null);
@@ -197,6 +200,7 @@ export default function Computer() {
     setBootFailed(false);
     setSwitchingCount(0);
     setComputerOpen(false);
+    setScreenRotated(false);
     autoBooted.current = null;
     if (botId) refreshController.start();
     return () => refreshController.dispose();
@@ -763,6 +767,14 @@ export default function Computer() {
                   />
                 )}
                 <GlassIconButton
+                  accessibilityLabel={screenRotated ? t("Upright screen") : t("Rotate screen")}
+                  onPress={() => setScreenRotated((value) => !value)}
+                  ios={screenRotated ? "rotate.left" : "rotate.right"}
+                  android={screenRotated ? "phone-portrait-outline" : "phone-landscape-outline"}
+                  size={36}
+                  iconSize={16}
+                />
+                <GlassIconButton
                   accessibilityLabel={t("Close computer")}
                   onPress={() => setComputerOpen(false)}
                   ios="xmark"
@@ -772,31 +784,56 @@ export default function Computer() {
                 />
               </View>
             </SafeAreaView>
-            <View style={{ flex: 1, backgroundColor: tokens.card }}>
+            <View
+              style={{ flex: 1, backgroundColor: tokens.card }}
+              onLayout={(event) => {
+                const { width, height } = event.nativeEvent.layout;
+                setScreenBox((box) =>
+                  box && box.width === width && box.height === height ? box : { width, height },
+                );
+              }}
+            >
               {foreground && loadedScreenUrl ? (
-                <ScreenWebView
-                  key={screenReload}
-                  url={loadedScreenUrl}
-                  interactive={hasControl}
-                  nativeKeyboard={hasControl}
-                  keyboardSession={keyboardSession}
-                  webViewRef={screenWebViewRef}
-                  onKeyboardMessage={(data) => {
-                    const gate = keyboardGate.current;
-                    if (!isComputerKeyboardReadyMessage(data, String(gate.session))) return;
-                    injectKeyboardCommands(gate.bridge.ready());
-                  }}
-                  onScreenState={onScreenState}
-                  onLoadStart={onScreenLoadStart}
-                  onRendererLost={() => void reloadScreen()}
-                  onError={() => {
-                    refreshController.invalidateScreen();
-                    setScreenOriginError(true);
-                    setScreenError(
-                      t("Could not load the desktop. This device cannot reach the screen URL."),
-                    );
-                  }}
-                />
+                <View
+                  style={
+                    screenRotated && screenBox
+                      ? {
+                          // A native transform keeps touch mapping correct while the
+                          // landscape desktop fills the portrait screen.
+                          position: "absolute",
+                          top: (screenBox.height - screenBox.width) / 2,
+                          left: (screenBox.width - screenBox.height) / 2,
+                          width: screenBox.height,
+                          height: screenBox.width,
+                          transform: [{ rotate: "90deg" }],
+                        }
+                      : { flex: 1 }
+                  }
+                >
+                  <ScreenWebView
+                    key={screenReload}
+                    url={loadedScreenUrl}
+                    interactive={hasControl}
+                    nativeKeyboard={hasControl}
+                    keyboardSession={keyboardSession}
+                    webViewRef={screenWebViewRef}
+                    onKeyboardMessage={(data) => {
+                      const gate = keyboardGate.current;
+                      if (!isComputerKeyboardReadyMessage(data, String(gate.session))) return;
+                      injectKeyboardCommands(gate.bridge.ready());
+                    }}
+                    onScreenState={onScreenState}
+                    onLoadStart={onScreenLoadStart}
+                    onRendererLost={() => void reloadScreen()}
+                    onError={() => {
+                      refreshController.invalidateScreen();
+                      setScreenOriginError(true);
+                      setScreenError(
+                        t("Could not load the desktop. This device cannot reach the screen URL."),
+                      );
+                    }}
+                  />
+                </View>
               ) : (
                 <View
                   style={{ flex: 1, alignItems: "center", justifyContent: "center", padding: 16 }}

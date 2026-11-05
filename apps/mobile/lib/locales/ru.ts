@@ -809,6 +809,8 @@ export const RU_MESSAGES: Record<string, string> = {
     "Диск компьютера почти заполнен. Освободите место, удалив ненужные результаты сборки и кеши.",
   "Tap + to create a bot": "Нажмите +, чтобы создать бота",
   Team: "Команда",
+  "Rotate screen": "Повернуть экран",
+  "Upright screen": "Экран вертикально",
   "Team Computer": "Командный компьютер",
   "That doesn’t look like a URL": "Это не похоже на URL",
   "That URL did not look like a Rakazo server": "Этот адрес не похож на сервер Rakazo",
