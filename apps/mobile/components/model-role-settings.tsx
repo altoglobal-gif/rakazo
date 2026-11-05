@@ -482,8 +482,8 @@ export function ModelRoleSettings({
         // While dragging, a primary line marks where the row will land.
         const dragging = drag?.index === index;
         const dragTarget = drag ? dropTarget(drag.index, drag.dy) : -1;
-        const markerBelow = dragging && dragTarget > drag.index && index === dragTarget;
-        const markerAbove = dragging && dragTarget < drag.index && index === dragTarget;
+        const markerBelow = drag !== null && dragTarget > drag.index && index === dragTarget;
+        const markerAbove = drag !== null && dragTarget < drag.index && index === dragTarget;
         const marker =
           markerBelow || markerAbove ? (
             <View
