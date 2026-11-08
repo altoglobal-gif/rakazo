@@ -14,6 +14,7 @@ import {
   ATTACHMENT_MAX_COUNT,
   attachmentSizeLabel,
   HISTORY_ATTACHMENTS_PER_RESPONSE,
+  MCP_APP_MIME_TYPE,
 } from "@rakazo/contracts";
 import {
   attachmentComputerPath,
@@ -22,7 +23,11 @@ import {
   validateAttachmentMimeType,
 } from "@rakazo/core";
 import type { Artifact, Prisma, PrismaClient } from "@rakazo/db";
-import { withResolvedArtifactVersion } from "@rakazo/db";
+import {
+  THREAD_LOCK_TRANSACTION_OPTIONS,
+  withResolvedArtifactVersion,
+  withTransactionRetry,
+} from "@rakazo/db";
 import { getLogger } from "@rakazo/logging";
 import { resolveBotWorkspacePath } from "./computer-support.js";
 
@@ -77,36 +82,43 @@ export async function attachWorkspaceFileToThread(
   };
   const stored = await deps.artifacts.put({ name, mimeType, bytes: input.bytes }, context);
   const hash = createHash("sha256").update(input.bytes).digest("hex");
-  const row = await withResolvedArtifactVersion(
-    deps.prisma,
-    {
-      spaceId: input.spaceId,
-      userId: input.userId,
-      botId: input.botId,
-      groupId: input.groupId,
-      name,
-    },
-    async (tx, { rootArtifactId, version }) => {
-      const artifact = await tx.artifact.create({
-        data: {
-          spaceId: input.spaceId,
-          userId: input.userId,
-          botId: input.botId,
-          groupId: input.groupId,
-          runId: input.runId,
-          name,
-          description: input.description?.trim().slice(0, ARTIFACT_DESCRIPTION_MAX_LENGTH) || null,
-          mimeType,
-          size: input.bytes.byteLength,
-          hash,
-          storageKey: stored.id,
-          rootArtifactId,
-          version,
-        },
-      });
-      await input.onAttached?.(tx, artifact);
-      return artifact;
-    },
+  // Concurrent runs in one thread contend for its sequence counters when onAttached posts
+  // a message; Postgres aborts a deadlock victim, which commits nothing, so retry it.
+  const row = await withTransactionRetry(() =>
+    withResolvedArtifactVersion(
+      deps.prisma,
+      {
+        spaceId: input.spaceId,
+        botId: input.botId,
+        groupId: input.groupId,
+        name,
+      },
+      async (tx, { rootArtifactId, version }) => {
+        const artifact = await tx.artifact.create({
+          data: {
+            spaceId: input.spaceId,
+            userId: input.userId,
+            botId: input.botId,
+            groupId: input.groupId,
+            runId: input.runId,
+            name,
+            description:
+              input.description?.trim().slice(0, ARTIFACT_DESCRIPTION_MAX_LENGTH) || null,
+            mimeType,
+            size: input.bytes.byteLength,
+            hash,
+            storageKey: stored.id,
+            rootArtifactId,
+            version,
+          },
+        });
+        await input.onAttached?.(tx, artifact);
+        return artifact;
+      },
+      // onAttached may post a message, which waits for the thread row; a snapshot read can
+      // hold it longer than Prisma's default budget, and an expired transaction is not retried.
+      THREAD_LOCK_TRANSACTION_OPTIONS,
+    ),
   ).catch(async (error) => {
     await deps.artifacts.remove(stored.id, context).catch(() => undefined);
     throw error;
@@ -132,7 +144,6 @@ async function attachedArtifacts(
     where: {
       id: { in: blocks.map((block) => block.artifactId) },
       spaceId: context.spaceId,
-      userId: context.userId,
     },
   });
   return new Map(rows.map((row) => [row.id, row]));
@@ -390,4 +401,65 @@ export function recentThreadFilesInstruction(files: readonly MaterializedThreadF
     "Files attached earlier in this conversation are also on your computer:",
     ...files.map(fileLine),
   ].join("\n");
+}
+
+/**
+ * Keeps an MCP app's HTML as a hidden artifact of the thread's bot or group, so its card can load
+ * it later through the same authorized read as attachments. One copy per document: a later call
+ * with the same app reuses it. The artifact list and search leave this type out.
+ */
+export async function storeMcpAppHtml(
+  deps: { prisma: PrismaClient; artifacts: ArtifactStore },
+  input: {
+    spaceId: string;
+    userId: string;
+    botId: string;
+    groupId?: string;
+    runId: string;
+    server: string;
+    html: string;
+    operationId: string;
+  },
+): Promise<string> {
+  const bytes = new TextEncoder().encode(input.html);
+  const hash = createHash("sha256").update(bytes).digest("hex");
+  const owner = {
+    spaceId: input.spaceId,
+    userId: input.userId,
+    botId: input.botId,
+    groupId: input.groupId ?? null,
+  };
+  const existing = await deps.prisma.artifact.findFirst({
+    where: { ...owner, hash, mimeType: MCP_APP_MIME_TYPE },
+    select: { id: true },
+  });
+  if (existing) return existing.id;
+  const name = `${input.server} app.html`.slice(0, ARTIFACT_NAME_MAX_LENGTH);
+  const context = {
+    operationId: input.operationId,
+    traceId: input.operationId,
+    spaceId: input.spaceId,
+    userId: input.userId,
+    botId: input.botId,
+    signal: new AbortController().signal,
+  };
+  const stored = await deps.artifacts.put({ name, mimeType: MCP_APP_MIME_TYPE, bytes }, context);
+  // Its own one-version family: a file of the same name never versions it, nor it the file.
+  const row = await deps.prisma.artifact
+    .create({
+      data: {
+        ...owner,
+        runId: input.runId,
+        name,
+        mimeType: MCP_APP_MIME_TYPE,
+        size: bytes.byteLength,
+        hash,
+        storageKey: stored.id,
+      },
+    })
+    .catch(async (error) => {
+      await deps.artifacts.remove(stored.id, context).catch(() => undefined);
+      throw error;
+    });
+  return row.id;
 }

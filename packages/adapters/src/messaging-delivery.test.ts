@@ -1,5 +1,6 @@
 import type { AdapterContext, MessagingSurface } from "@rakazo/adapter-kit";
 import type { PrismaClient } from "@rakazo/db";
+import { SpaceDeletionInProgressError } from "@rakazo/db";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ChatSdkMessagingSurface, MessagingSendError } from "./chat-sdk-surface.js";
 import type { MessagingDeliveryDeps } from "./messaging-delivery.js";
@@ -8,8 +9,11 @@ import {
   deliverMessagingOutbound,
   MESSAGING_DM_OUTBOUND_CAP,
   MESSAGING_OUTBOUND_MAX_ATTEMPTS,
+  mirrorMessagingOutbound,
+  mirrorMessagingProgress,
 } from "./messaging-delivery.js";
 import { messagingPlatformsFromEnv } from "./messaging-platforms.js";
+import { userProgressClientNonce } from "./user-progress.js";
 
 const context: AdapterContext = {
   operationId: "op-1",
@@ -33,6 +37,7 @@ const identity = {
 const messagingRun = {
   id: "run-1",
   botId: "bot-1",
+  userId: "user-1",
   trigger: "messaging",
   sourceMessage: { blocks: [{ kind: "text", text: "hi" }] },
 };
@@ -116,6 +121,11 @@ function createFakeSurface(sendError?: Error) {
   return { messaging, sendToThread, openDirectThread };
 }
 
+/** A message_user update or another interim message a running run posted. */
+function interim(id: string, text: string) {
+  return { id, clientNonce: userProgressClientNonce("run-1"), blocks: [{ kind: "text", text }] };
+}
+
 function createDeps(overrides: {
   run?: unknown;
   identity?: Record<string, unknown> | null;
@@ -133,11 +143,23 @@ function createDeps(overrides: {
   const identityRow =
     overrides.identity === null ? null : { ...identity, ...(overrides.identity ?? {}) };
   const prisma = {
+    user: {
+      findUnique: vi.fn(
+        async (_query: { where: { id: string } }): Promise<{ deactivatedAt: Date | null } | null> =>
+          null,
+      ),
+    },
+    bot: {
+      findUnique: vi.fn(async ({ where }: { where: { id: string } }) => ({
+        userId: `owner-of-${where.id}`,
+      })),
+    },
     run: {
       findUnique: vi.fn(async () => overrides.run ?? messagingRun),
       updateMany: vi.fn(async () => ({ count: 1 })),
     },
     message: {
+      findUnique: vi.fn(async (): Promise<{ thread: { userId: string } } | null> => null),
       findMany: vi.fn(
         async () =>
           overrides.messages ?? [
@@ -414,6 +436,81 @@ describe("deliverMessagingOutbound", () => {
     expect(deps.sendToThread).not.toHaveBeenCalled();
   });
 
+  it("queues a running chat run's interim messages without marking the run mirrored", async () => {
+    const messages: unknown[] = [
+      interim("m-1", "Checking flights now."),
+      { id: "m-2", blocks: [{ kind: "steps", steps: [] }] },
+      interim("m-3", "Found two options."),
+    ];
+    const deps = createDeps({ messages });
+    await mirrorMessagingProgress(deps, "run-1");
+    expect(deps.rows.map((row) => row.idempotencyKey)).toEqual(["msg:m-1", "msg:m-3"]);
+    // Mirrored still means the reply is out.
+    expect(deps.prisma.run.updateMany).not.toHaveBeenCalled();
+
+    messages.push({ id: "m-4", blocks: [{ kind: "text", text: "Booked the cheaper one." }] });
+    await mirrorMessagingOutbound(deps, "run-1");
+    expect(deps.rows.map((row) => row.idempotencyKey)).toEqual(["msg:m-1", "msg:m-3", "msg:m-4"]);
+    expect(deps.prisma.run.updateMany).toHaveBeenCalledOnce();
+  });
+
+  it("holds a card, a file and everything after them for the end of the run", async () => {
+    const messages: unknown[] = [
+      interim("m-1", "Planning the trip."),
+      { id: "m-2", blocks: [{ kind: "page", pageId: "p-1", title: "Trip plan" }] },
+      interim("m-3", "Sent you the plan, now the budget."),
+      { id: "m-4", blocks: [{ kind: "file", artifactId: "art-1", name: "budget.csv" }] },
+      interim("m-5", "Sent the budget too."),
+    ];
+    const deps = createDeps({ identity: { provider: "telegram" }, messages });
+    await mirrorMessagingProgress(deps, "run-1");
+    expect(deps.rows.map((row) => row.idempotencyKey)).toEqual(["msg:m-1"]);
+
+    // The reply links the page, so its card never goes as a stray title.
+    messages.push({
+      id: "m-6",
+      blocks: [{ kind: "text", text: "Your [Trip plan](page:p-1) is ready." }],
+    });
+    await mirrorMessagingProgress(deps, "run-1");
+    await mirrorMessagingOutbound(deps, "run-1");
+    expect(deps.rows.map((row) => [row.idempotencyKey, row.body])).toEqual([
+      ["msg:m-1", "Planning the trip."],
+      ["msg:m-3", "Sent you the plan, now the budget."],
+      ["msg:m-4:file:art-1", ""],
+      ["msg:m-5", "Sent the budget too."],
+      ["msg:m-6", "Your Trip plan is ready."],
+    ]);
+  });
+
+  it("sends a long interim message's parts once when the run's reply follows", async () => {
+    const messages: unknown[] = [interim("m-1", `${"x".repeat(4_200)} TAIL-MARK`)];
+    const deps = createDeps({ identity: { provider: "telegram" }, messages });
+    await mirrorMessagingProgress(deps, "run-1");
+    expect(deps.rows.map((row) => row.idempotencyKey)).toEqual(["msg:m-1", "msg:m-1:2"]);
+
+    messages.push({ id: "m-2", blocks: [{ kind: "text", text: "Done." }] });
+    await mirrorMessagingProgress(deps, "run-1");
+    await mirrorMessagingOutbound(deps, "run-1");
+    expect(deps.rows.map((row) => row.idempotencyKey)).toEqual(["msg:m-1", "msg:m-1:2", "msg:m-2"]);
+    expect(deps.rows.map((row) => row.body).join("")).toContain("TAIL-MARK");
+  });
+
+  it("leaves group and in-app runs to the end-of-run mirror", async () => {
+    const channel = createDeps({
+      run: {
+        ...messagingRun,
+        sourceMessage: { blocks: [{ kind: "channel_message", channelId: "c-1" }] },
+      },
+    });
+    await mirrorMessagingProgress(channel, "run-1");
+    expect(channel.rows).toEqual([]);
+    for (const trigger of ["user", "bot_message"]) {
+      const other = createDeps({ run: { ...messagingRun, trigger } });
+      await mirrorMessagingProgress(other, "run-1");
+      expect(other.rows).toEqual([]);
+    }
+  });
+
   it("ignores in-app runs and runs without a messaging identity", async () => {
     const notMessaging = createDeps({ run: { ...messagingRun, trigger: "user" } });
     await deliverMessagingOutbound(notMessaging, { runId: "run-1" }, context);
@@ -431,6 +528,15 @@ describe("deliverMessagingOutbound", () => {
       { threadId: "sendblue:dm-1", body: "Hello from your bot" },
       context,
     );
+  });
+
+  it("keeps another member's bot_message run out of the linked person's DM", async () => {
+    const deps = createDeps({
+      run: { ...messagingRun, trigger: "bot_message", userId: "user-2" },
+    });
+    await deliverMessagingOutbound(deps, { runId: "run-1" }, context);
+    expect(deps.rows).toHaveLength(0);
+    expect(deps.sendToThread).not.toHaveBeenCalled();
   });
 
   it("holds sendblue DM sends at the consecutive-outbound cap", async () => {
@@ -572,6 +678,55 @@ describe("deliverMessagingOutbound", () => {
     expect(deps.rows[0]).toEqual(expect.objectContaining({ status: "failed" }));
   });
 
+  it("drops what was queued for a person who has since been deactivated", async () => {
+    const deps = createDeps({
+      run: null,
+      outboundRows: [
+        {
+          id: "out-late",
+          idempotencyKey: "late:1",
+          kind: "dm",
+          identityId: "mi-1",
+          body: "a reply queued before deactivation",
+          status: "pending",
+          providerHandle: null,
+        },
+      ],
+    });
+    deps.prisma.user.findUnique.mockResolvedValue({ deactivatedAt: new Date() });
+    await deliverMessagingOutbound(deps, {}, context);
+
+    expect(deps.sendToThread).not.toHaveBeenCalled();
+    expect(deps.openDirectThread).not.toHaveBeenCalled();
+    expect(deps.rows[0]).toEqual(expect.objectContaining({ status: "failed" }));
+  });
+
+  it("does not post a group reply queued by a person who has since been deactivated", async () => {
+    const deps = createDeps({
+      run: null,
+      outboundRows: [
+        {
+          id: "out-group",
+          idempotencyKey: "group:1",
+          kind: "group",
+          threadId: "group-thread",
+          sourceMessageId: "m-1",
+          body: "a group reply queued before deactivation",
+          status: "pending",
+          providerHandle: null,
+        },
+      ],
+    });
+    vi.mocked(deps.prisma.message.findUnique).mockResolvedValue({
+      thread: { userId: "user-1" },
+    } as never);
+    deps.prisma.user.findUnique.mockResolvedValue({ deactivatedAt: new Date() });
+    await deliverMessagingOutbound(deps, {}, context);
+
+    expect(deps.sendToThread).not.toHaveBeenCalled();
+    expect(deps.rows[0]).toEqual(expect.objectContaining({ status: "failed" }));
+  });
+
   it("does not send a connect invite after the connection was revoked", async () => {
     const deps = createDeps({
       run: null,
@@ -648,6 +803,31 @@ describe("deliverMessagingOutbound", () => {
       where: { id: "mi-1" },
       data: { outboundSinceInbound: { increment: 1 } },
     });
+  });
+
+  it("does not send a connect invite queued by a person who has since been deactivated", async () => {
+    const deps = createDeps({
+      run: null,
+      connectionStatus: "pending",
+      outboundRows: [
+        {
+          id: "out-connect",
+          idempotencyKey: "connect:bot-1:bot-9",
+          kind: "dm",
+          identityId: "mi-1",
+          body: "wants to connect. Reply YES to allow, NO to decline.",
+          status: "pending",
+          providerHandle: null,
+        },
+      ],
+    });
+    deps.prisma.user.findUnique.mockImplementation(async ({ where }) => ({
+      deactivatedAt: where.id === "owner-of-bot-1" ? new Date() : null,
+    }));
+    await deliverMessagingOutbound(deps, {}, context);
+
+    expect(deps.sendToThread).not.toHaveBeenCalled();
+    expect(deps.rows[0]).toEqual(expect.objectContaining({ status: "failed" }));
   });
 
   it("does not re-queue a connect invite when the provider send fails", async () => {
@@ -756,6 +936,8 @@ function createChannelDeps(
     messages?: unknown[];
     posterProvider?: string;
     runs?: Array<{ id: string; messages: unknown[] }>;
+    /** Accounts that are deactivated. */
+    deactivated?: string[];
   } = {},
 ) {
   const text = overrides.text ?? "found it";
@@ -808,6 +990,7 @@ function createChannelDeps(
   const txMock = {
     thread: { update: vi.fn(async () => ({ nextMessageSeq: 5, nextEventSeq: 10 })) },
     message: {
+      findUnique: vi.fn(async (): Promise<{ thread: { userId: string } } | null> => null),
       create: vi.fn(async ({ data }: { data: Record<string, unknown> }) => {
         const message = { id: `ctx-${contextMessages.length + 1}`, seq: 4, ...data };
         contextMessages.push(message);
@@ -923,7 +1106,13 @@ function createChannelDeps(
         },
       ),
     },
-    user: { findUnique: vi.fn(async () => ({ id: "user-1", name: "Alice Owner" })) },
+    user: {
+      findUnique: vi.fn(async ({ where }: { where: { id: string } }) => ({
+        id: where.id,
+        name: "Alice Owner",
+        deactivatedAt: overrides.deactivated?.includes(where.id) ? new Date() : null,
+      })),
+    },
     $queryRaw: vi.fn(async () =>
       ["bot-1", "bot-2"].map((id) => ({
         id,
@@ -1164,6 +1353,17 @@ describe("deliverMessagingOutbound channel runs", () => {
     expect(deps.contextMessages).toHaveLength(0);
   });
 
+  it("skips a mentioned peer whose Space is being deleted", async () => {
+    const deps = createChannelDeps({ text: "@Helper what do you think?" });
+    deps.sendUserMessage.mockRejectedValueOnce(new SpaceDeletionInProgressError());
+    await deliverMessagingOutbound(deps, { runId: "run-1" }, context);
+
+    expect(deps.sendUserMessage).toHaveBeenCalledOnce();
+    expect(deps.enqueue).not.toHaveBeenCalledWith(
+      expect.objectContaining({ name: "run.continue" }),
+    );
+  });
+
   it("wakes an @-mentioned peer even when the casing differs", async () => {
     const deps = createChannelDeps({ text: "@helper ping" });
     await deliverMessagingOutbound(deps, { runId: "run-1" }, context);
@@ -1171,6 +1371,26 @@ describe("deliverMessagingOutbound channel runs", () => {
     expect(deps.sendUserMessage).toHaveBeenCalledWith(
       expect.objectContaining({ botId: "bot-2", clientNonce: "messaging-peer:m-1:bot-2" }),
     );
+  });
+
+  it("keeps a reply by a since-deactivated person's bot out of the group and its peers", async () => {
+    const deps = createChannelDeps({ text: "@Helper what do you think?", deactivated: ["user-1"] });
+    await deliverMessagingOutbound(deps, { runId: "run-1" }, context);
+
+    expect(deps.rows).toEqual([]);
+    expect(deps.sendToThread).not.toHaveBeenCalled();
+    expect(deps.contextMessages).toEqual([]);
+    expect(deps.sendUserMessage).not.toHaveBeenCalled();
+  });
+
+  it("leaves a deactivated peer's bot out of the fan-out", async () => {
+    const deps = createChannelDeps({ text: "@Helper what do you think?", deactivated: ["user-2"] });
+    await deliverMessagingOutbound(deps, { runId: "run-1" }, context);
+
+    expect(deps.sendToThread).toHaveBeenCalledOnce();
+    expect(deps.contextMessages).toEqual([]);
+    expect(deps.sendUserMessage).not.toHaveBeenCalled();
+    expect(deps.enqueue).not.toHaveBeenCalled();
   });
 
   it("does not wake anyone when the hop budget is exhausted", async () => {

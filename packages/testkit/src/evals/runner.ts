@@ -6,7 +6,7 @@ import {
   MessagingTeamChatEmulator,
   messageBot,
 } from "@rakazo/adapters";
-import type { MessageBlock, ModelConnectInput, RunStatus } from "@rakazo/contracts";
+import type { MessageBlock, ModelConnectInput, ReplyMode, RunStatus } from "@rakazo/contracts";
 import { ACTIVE_RUN_STATUSES, attachmentComputerPath, isTerminal } from "@rakazo/core";
 import type { createDb } from "@rakazo/db";
 import { createThreadEvents } from "@rakazo/db";
@@ -60,6 +60,7 @@ export type TrialOptions = {
   timeoutMs: number;
   judge?: EvalJudge;
   maxToolCalls: number;
+  replyMode?: ReplyMode;
   createApp: (
     services: EvalServices,
     messaging: MessagingTeamChatEmulator,
@@ -216,6 +217,7 @@ export async function runTrial(
         botId,
         modelProvider: options.connection.provider,
         modelId: options.connection.modelId,
+        replyMode: options.replyMode,
       });
       // Direct synthetic fixture state, so setup never depends on the behavior under test.
       if (scenario.botSetup)
@@ -244,12 +246,14 @@ export async function runTrial(
           description: scenario.peer.description,
           instructions: scenario.peer.instructions,
           notifyOnFinish: false,
+          ...(scenario.peer.ownComputer ? { computerMode: "dedicated" } : {}),
         });
         await discardBotIntroRun(trial, cookie, created.id);
         await rpc(app, cookie, "bots/update", {
           botId: created.id,
           modelProvider: options.connection.provider,
           modelId: options.connection.modelId,
+          replyMode: options.replyMode,
         });
         peer = { id: created.id, name: scenario.peer.name };
       }
@@ -287,6 +291,26 @@ export async function runTrial(
       if (scenario.approvalTool) await rpc(app, cookie, "autoReview/set", { mode: "ask" });
     };
     await setupActor();
+    if (scenario.computerFiles?.length) {
+      // Written through the same upload path as a person's file drop, under each owner's control.
+      for (const owner of [botId, peer?.id]) {
+        const files = scenario.computerFiles.filter(
+          (file) => (file.owner === "peer" ? peer?.id : botId) === owner,
+        );
+        if (!owner || !files.length) continue;
+        await rpc(app, cookie, "computer/boot", { botId: owner });
+        await rpc(app, cookie, "computer/takeover", { botId: owner });
+        for (const file of files)
+          await rpc(app, cookie, "computer/uploadFile", {
+            botId: owner,
+            path: file.path,
+            contentBase64: Buffer.from(file.content).toString("base64"),
+          });
+        await rpc(app, cookie, "computer/release", { botId: owner });
+      }
+      if (scenario.computerFiles.some((file) => file.owner === "peer") && !peer)
+        throw new EvalFailure("harness", "Peer computer files need the case's peer bot");
+    }
     if (scenario.routine) {
       await rpc(app, cookie, "routines/create", {
         botId,
@@ -531,7 +555,13 @@ export async function runTrial(
           }));
       } else if ("fromPeer" in step) {
         if (!peer) throw new EvalFailure("harness", "A fromPeer step needs the case's peer bot");
-        await deliverPeerMessage(prisma, handles.jobs, peer, botId, step.fromPeer);
+        await deliverPeerMessage(
+          prisma,
+          handles.jobs,
+          peer,
+          botId,
+          step.fromPeer.replaceAll("{peerHome}", `bots/${peer.id}`),
+        );
         runId = await poll(
           async () =>
             (
@@ -797,6 +827,8 @@ export async function runTrial(
               ]))
             )
               await assertToolBudget();
+            // Work that ended between two checks still counts before grading and the judge.
+            await assertToolBudget();
           }
           const runs = await prisma.run.findMany({
             where: { botId: { in: memberBotIds }, createdAt: { gte: new Date(requestStarted) } },
@@ -870,9 +902,12 @@ export async function runTrial(
         const observed = realtime.events.filter((event) => event.runId === runId);
         routineRuns.push({
           text: lastText,
-          unread: (
-            await prisma.thread.findUniqueOrThrow({ where: { botId }, select: { unread: true } })
-          ).unread,
+          unread: Boolean(
+            await prisma.threadRead.findFirst({
+              where: { thread: { botId }, unread: true },
+              select: { userId: true },
+            }),
+          ),
           messages: messages.map((m) => m.blocks as RoutineEvidence["messages"][number]),
           progress: observed
             .filter((event) => event.type === "thread.progress")
@@ -925,6 +960,15 @@ export async function runTrial(
       routines.length,
       await prisma.event.count({ where: { botId, type: "routine.created" } }),
     );
+    const deliveries = await deliveredBySubject(prisma, botId, [
+      ...(peer
+        ? [
+            (await prisma.thread.findUnique({ where: { botId: peer.id }, select: { id: true } }))
+              ?.id,
+          ]
+        : []),
+      group?.threadId,
+    ]);
     await captureTools();
     const finalStep = scenario.steps.length;
     const evidence: Evidence = {
@@ -933,6 +977,8 @@ export async function runTrial(
       memberReplies,
       routineRuns,
       peerExchanges,
+      ...(deliveries.length ? { deliveries } : {}),
+      ...(peer ? { peerHome: `bots/${peer.id}` } : {}),
       files,
       ...(Object.keys(seededAttachments).length ? { seededAttachments } : {}),
       records: services.records,
@@ -1192,6 +1238,39 @@ async function deliverPeerMessage(
     { allowTerminalSource: true },
   );
   if (!sent.ok) throw new EvalFailure("harness", `Peer message was not delivered: ${sent.error}`);
+}
+
+/** Messages and handoffs the subject delivered into these threads, read from what was stored. */
+async function deliveredBySubject(
+  prisma: EvalApp["prisma"],
+  botId: string,
+  threadIds: Array<string | undefined>,
+): Promise<NonNullable<Evidence["deliveries"]>> {
+  const ids = threadIds.filter((id): id is string => Boolean(id));
+  if (!ids.length) return [];
+  const messages = await prisma.message.findMany({
+    where: { threadId: { in: ids } },
+    select: { blocks: true },
+    orderBy: { seq: "asc" },
+  });
+  return messages.flatMap((message) => {
+    const blocks = message.blocks as MessageBlock[];
+    const sent = blocks.find(
+      (block) =>
+        (block.kind === "bot_message_received" || block.kind === "handoff") &&
+        block.fromBotId === botId,
+    );
+    if (!sent || (sent.kind !== "bot_message_received" && sent.kind !== "handoff")) return [];
+    return [
+      {
+        kind: sent.kind === "handoff" ? ("handoff" as const) : ("message" as const),
+        text: sent.text,
+        files: blocks.flatMap((block) =>
+          (block.kind === "file" || block.kind === "image") && block.name ? [block.name] : [],
+        ),
+      },
+    ];
+  });
 }
 
 async function poll<T>(read: () => Promise<T | undefined>, deadline: number): Promise<T> {

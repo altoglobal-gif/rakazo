@@ -11,15 +11,19 @@ import type { MessageBlock } from "@rakazo/contracts";
 import { botMessageHopExhausted, nextBotMessageHop, pageLinksAsTitles } from "@rakazo/core";
 import type { Prisma, PrismaClient, ThreadEvents } from "@rakazo/db";
 import {
+  accountDeactivated,
   appendEventInTransaction,
   CrossSpaceCommunicationBlockedError,
   createThreadMessageInTransaction,
   crossSpaceCommunicationAllowed,
   runAsSystem,
+  SpaceDeletionInProgressError,
+  THREAD_LOCK_TRANSACTION_OPTIONS,
 } from "@rakazo/db";
 import { getLogger } from "@rakazo/logging";
 import { MessagingSendError } from "./chat-sdk-surface.js";
 import { splitOutboundBody } from "./messaging-platforms.js";
+import { isUserProgressClientNonce } from "./user-progress.js";
 
 /**
  * Margin under vendor consecutive-outbound caps (sendblue enforces one hard):
@@ -99,7 +103,26 @@ export async function mirrorMessagingOutbound(
   });
 }
 
-async function mirrorRun(deps: MessagingDeliveryDeps, runId: string): Promise<void> {
+/**
+ * Queues the interim messages a running 1:1 chat run has posted so far, such as a message_user
+ * update. Cards and files wait for the end-of-run mirror, which sees the whole reply (a page the
+ * reply links goes with the reply, not as its own title), and so does everything posted after
+ * them, to keep the app's order. The run is not marked mirrored, which still means its reply is
+ * out, and the outbox keys rows by message, so the end-of-run mirror never sends these twice.
+ * Group runs post once, when they end.
+ */
+export async function mirrorMessagingProgress(
+  deps: MessagingDeliveryDeps,
+  runId: string,
+): Promise<void> {
+  await mirrorRun(deps, runId, true);
+}
+
+async function mirrorRun(
+  deps: MessagingDeliveryDeps,
+  runId: string,
+  progress = false,
+): Promise<void> {
   const run = await deps.prisma.run.findUnique({
     where: { id: runId },
     include: { sourceMessage: true },
@@ -113,11 +136,11 @@ async function mirrorRun(deps: MessagingDeliveryDeps, runId: string): Promise<vo
         block.kind === "channel_message",
     );
     if (channelBlock) {
-      await mirrorChannelRun(deps, run, channelBlock);
+      if (!progress) await mirrorChannelRun(deps, run, channelBlock);
       return;
     }
-  } else if (run.trigger !== "bot_message") {
-    // Mirror inbound messaging runs and delegated bot_message replies only.
+  } else if (progress || run.trigger !== "bot_message") {
+    // Mirror inbound messaging runs and, once they end, delegated bot_message replies only.
     // Do not push in-app user/routine runs out to the linked chat.
     return;
   }
@@ -125,7 +148,9 @@ async function mirrorRun(deps: MessagingDeliveryDeps, runId: string): Promise<vo
   const identity = await deps.prisma.messagingIdentity.findUnique({
     where: { botId: run.botId },
   });
-  if (!identity) return;
+  // The linked DM is one person's chat. In a shared Space another member's run on this bot, such
+  // as a reply to their message_bot, stays in the app instead of reaching that person's chat app.
+  if (!identity || identity.userId !== run.userId) return;
 
   // bot_message runs can carry the bot's user-facing reply after a delegate wake.
   // extractText keeps only text and page titles, so inter-bot chatter blocks never leak out.
@@ -142,7 +167,7 @@ async function mirrorRun(deps: MessagingDeliveryDeps, runId: string): Promise<vo
   // The whole reply takes one explicit, non-overlapping range, like a group
   // reply, so a concurrent DM mirror cannot interleave its parts.
   const linkedPages = linkedPageIds(messages);
-  const rows = messages.flatMap((message) => {
+  const rowsByMessage = messages.map((message) => {
     const body = extractText(message.blocks, linkedPages);
     const parts = body ? splitOutboundBody(identity.provider, body) : [];
     return [
@@ -162,6 +187,16 @@ async function mirrorRun(deps: MessagingDeliveryDeps, runId: string): Promise<vo
       })),
     ];
   });
+  // While the run is going, send its interim messages up to the first other message that sends
+  // anything, such as a card or a file: it waits for the whole reply, and nothing posted after it
+  // goes ahead of it.
+  const held = progress
+    ? rowsByMessage.findIndex(
+        (rows, index) =>
+          rows.length > 0 && !isUserProgressClientNonce(messages[index]!.clientNonce),
+      )
+    : -1;
+  const rows = (held === -1 ? rowsByMessage : rowsByMessage.slice(0, held)).flat();
   if (rows.length === 0) return;
   // Atomic dedupe: a concurrent messaging.deliver for the same run loses on
   // the idempotencyKey unique key instead of throwing P2002.
@@ -208,7 +243,8 @@ async function mirrorChannelRun(
   const identity = await deps.prisma.messagingIdentity.findUnique({
     where: { botId: run.botId },
   });
-  if (!identity) return;
+  // A deactivated person's bot neither posts to the group nor reaches its other bots.
+  if (!identity || (await accountDeactivated(deps.prisma, identity.userId))) return;
   const channel = await deps.prisma.messagingChannel.findUnique({
     where: { id: channelBlock.channelId },
   });
@@ -298,7 +334,7 @@ async function fanOutToPeers(
       const peerIdentity = await deps.prisma.messagingIdentity.findUnique({
         where: { id: peer.identityId! },
       });
-      if (!peerIdentity) continue;
+      if (!peerIdentity || (await accountDeactivated(deps.prisma, peerIdentity.userId))) continue;
       if (!(await crossSpaceCommunicationAllowed(deps.prisma, identity.botId, peerIdentity.botId)))
         continue;
       const peerThread = await deps.prisma.thread.findFirst({
@@ -337,7 +373,11 @@ async function fanOutToPeers(
             crossSpaceSenderBotId: identity.botId,
           })
           .catch((error: unknown) => {
-            if (error instanceof CrossSpaceCommunicationBlockedError) return null;
+            if (
+              error instanceof CrossSpaceCommunicationBlockedError ||
+              error instanceof SpaceDeletionInProgressError
+            )
+              return null;
             throw error;
           });
         if (sent?.runId) {
@@ -369,7 +409,7 @@ async function fanOutToPeers(
             type: "thread.message.created",
             payload: { messageId: created.id, role: "user", blocks: [block] },
           });
-        })
+        }, THREAD_LOCK_TRANSACTION_OPTIONS)
         .catch((error: unknown) => {
           if (error instanceof CrossSpaceCommunicationBlockedError) return null;
           throw error;
@@ -424,7 +464,13 @@ async function sendConnectInvite(
             AND "targetBotId" = ${pair.targetBotId}
           FOR UPDATE
         `;
-        if (locked[0]?.status !== "pending" || !communicationAllowed) {
+        // An invite queued before its requester was deactivated is not sent for them.
+        const requester = await tx.bot.findUnique({
+          where: { id: pair.requesterBotId },
+          select: { userId: true },
+        });
+        const requesterDeactivated = requester && (await accountDeactivated(tx, requester.userId));
+        if (locked[0]?.status !== "pending" || !communicationAllowed || requesterDeactivated) {
           await tx.messagingOutbound.updateMany({
             where: { id: row.id },
             data: { status: "failed" },
@@ -565,7 +611,17 @@ async function deliverRow(
   let accepted = false;
   try {
     if (row.kind === "group" || row.kind === "intro") {
-      if (!row.threadId) {
+      // A reply a deactivated person's bot queued for a group is not posted after all.
+      const source = row.sourceMessageId
+        ? await deps.prisma.message.findUnique({
+            where: { id: row.sourceMessageId },
+            select: { thread: { select: { userId: true } } },
+          })
+        : null;
+      if (
+        !row.threadId ||
+        (source && (await accountDeactivated(deps.prisma, source.thread.userId)))
+      ) {
         await deps.prisma.messagingOutbound.update({
           where: { id: row.id },
           data: { status: "failed" },
@@ -586,7 +642,8 @@ async function deliverRow(
     const identity = row.identityId
       ? await deps.prisma.messagingIdentity.findUnique({ where: { id: row.identityId } })
       : null;
-    if (!identity) {
+    // Nothing more reaches a deactivated person's chat app, including what was queued before.
+    if (!identity || (await accountDeactivated(deps.prisma, identity.userId))) {
       await deps.prisma.messagingOutbound.update({
         where: { id: row.id },
         data: { status: "failed" },

@@ -1,9 +1,4 @@
-import type {
-  JobPublisher,
-  MessagingInboundAttachment,
-  MessagingInboundMessage,
-  SandboxProvider,
-} from "@rakazo/adapter-kit";
+import type { JobPublisher, MessagingInboundMessage, SandboxProvider } from "@rakazo/adapter-kit";
 import { messagingDeliverJob, runContinueJob } from "@rakazo/adapter-kit";
 import { insertOutboundRows } from "@rakazo/adapters";
 import type { MessageBlock } from "@rakazo/contracts";
@@ -26,19 +21,24 @@ import type {
   ThreadEvents,
 } from "@rakazo/db";
 import {
+  accountDeactivated,
   createThreadMessage,
   crossSpaceCommunicationAllowed,
   normalizeMessagingLinkCode,
   redeemMessagingLinkCode,
+  SpaceDeletionInProgressError,
+  THREAD_LOCK_TRANSACTION_OPTIONS,
 } from "@rakazo/db";
 import { getLogger } from "@rakazo/logging";
+import type { InboundAttachmentStore } from "./inbound-attachments.js";
+import { storeInboundAttachments } from "./inbound-attachments.js";
 import type { MessagingReceipts } from "./messaging-receipts.js";
 import {
   MESSAGE_ROUTING_REARMED_REASON,
   MESSAGE_ROUTING_REASON,
   MESSAGE_ROUTING_RESERVATION_MS,
 } from "./team-chat-startup.js";
-import { cancelThreadRuns, finishThreadStop, STOPPED_BY_MESSAGE_NOTE } from "./thread-target.js";
+import { cancelThreadRuns, finishThreadStop, STOPPED_BY_MESSAGE_NOTE } from "./thread-stop.js";
 import {
   deliverWebhookEvent,
   formatUntrustedDeliveryPayload,
@@ -62,22 +62,7 @@ export interface MessagingInboundDeps {
   openSignup: boolean;
   signupPolicy: SignupPolicyEnv;
   acknowledge?: MessagingReceipts["acknowledge"];
-  /** Stores a platform file (Telegram photo, voice note, …) as a thread artifact. */
-  storeAttachment?: (input: {
-    spaceId: string;
-    userId: string;
-    botId: string;
-    attachment: MessagingInboundAttachment;
-    clientNonce: string;
-    downloadDeadline?: number;
-  }) => Promise<{
-    id: string;
-    name: string;
-    mimeType: string;
-    size: number;
-    /** Downloaded content; absent when a replayed delivery returned a stored row. */
-    bytes?: Uint8Array;
-  }>;
+  storeAttachment?: InboundAttachmentStore;
   /**
    * Transcribes inbound audio with the bot owner's voice provider. On null or
    * a throw only the file reference is delivered. `signal` aborts when the
@@ -123,8 +108,14 @@ export function createMessagingInboundHandler(deps: MessagingInboundDeps) {
       await handleChannelEvent(deps, event);
       return;
     }
-    await handleDirectEvent(deps, event);
+    await handleDirectEvent(deps, event).catch(droppedWhileDeleting);
   };
+}
+
+/** A Space being deleted takes no messages; failing would only make the provider redeliver. */
+function droppedWhileDeleting(error: unknown): void {
+  if (!(error instanceof SpaceDeletionInProgressError)) throw error;
+  getLogger().info("messaging inbound dropped", { reason: "space being deleted" });
 }
 
 async function handleDirectEvent(
@@ -140,6 +131,8 @@ async function handleDirectEvent(
   const existing = await deps.prisma.messagingIdentity.findUnique({ where });
   if (existing && event.installationSpaceId && existing.spaceId !== event.installationSpaceId)
     return;
+  // A deactivated person's chat apps act for nobody: no commands, messages or links.
+  if (existing && (await accountDeactivated(deps.prisma, existing.userId))) return;
   if (existing) {
     // Any reply — even a content-free reaction — ends the consecutive-
     // outbound streak, but only real text wakes the bot. The conversation
@@ -213,6 +206,8 @@ async function handleDirectEvent(
     threadId: ids.threadId,
     botId: ids.botId,
     userId: ids.userId,
+    // The address is verified as this person\'s, so the line is theirs.
+    authorUserId: ids.userId,
     blocks: [
       ...(body ? [{ kind: "text" as const, text: body }] : []),
       ...stored.artifacts.map((artifact) => messageBlockForArtifact(artifact)),
@@ -256,41 +251,28 @@ async function handleDirectEvent(
 /** Time for all voice note transcripts of one inbound message; files are delivered without them after it. */
 const VOICE_TRANSCRIBE_BUDGET_MS = 20_000;
 
-/** Download provider-held files into thread artifacts, mirroring the team-chat path. */
+/**
+ * How far a roster's platform time may run ahead of the server's clock and still count
+ * as the roster's version; further ahead the event applies its membership unversioned.
+ */
+const ROSTER_TIME_SKEW_MS = 5 * 60_000;
+
+/** Download provider-held files into thread artifacts, then transcribe voice notes. */
 async function storeInboundMedia(
   deps: MessagingInboundDeps,
   ids: ProvisionedMessagingIdentity,
   event: MessagingInboundMessage,
 ) {
-  const stored: Array<{ artifact: StoredAttachment; bytes: Uint8Array | undefined }> = [];
-  const unavailable: string[] = [];
-  const downloadDeadline = Date.now() + 2_000;
-  for (const [index, attachment] of (event.attachments ?? []).entries()) {
-    if (!deps.storeAttachment || index >= ATTACHMENT_MAX_COUNT) {
-      unavailable.push(`[file: ${sanitizeMessagingLabel(attachment.name)} (unavailable)]`);
-      continue;
-    }
-    try {
-      const { bytes, ...artifact } = await deps.storeAttachment({
-        spaceId: ids.spaceId,
-        userId: ids.userId,
-        botId: ids.botId,
-        attachment,
-        clientNonce: `messaging-attachment:${event.provider}:${event.handle}:${index}`,
-        downloadDeadline,
-      });
-      // Only audio is transcribed; other files' bytes are not kept past their download.
-      stored.push({
-        artifact,
-        bytes: isAttachmentAudioMimeType(artifact.mimeType) ? bytes : undefined,
-      });
-    } catch (error) {
-      getLogger().warn("messaging attachment was not stored", {
-        reason: error instanceof Error ? error.message : String(error),
-      });
-      unavailable.push(`[file: ${sanitizeMessagingLabel(attachment.name)} (unavailable)]`);
-    }
-  }
+  const { stored, unavailable } = await storeInboundAttachments(
+    deps.storeAttachment,
+    ids,
+    event.attachments ?? [],
+    {
+      clientNonce: (index) => `messaging-attachment:${event.provider}:${event.handle}:${index}`,
+      limit: ATTACHMENT_MAX_COUNT,
+      downloadDeadline: Date.now() + 2_000,
+    },
+  );
   // Transcribe only after every download, so a slow transcription cannot use up the
   // download deadline of the attachments that follow it. One short budget covers all
   // transcripts, so the webhook is answered before the provider retries it.
@@ -370,6 +352,8 @@ export async function wakeMessageRoutines(
     where: {
       botId: target.botId,
       spaceId: target.spaceId,
+      // The wake runs as the identity's person, so only their own routines may ride on it.
+      userId: target.userId,
       active: true,
       messageProvider: event.provider,
     },
@@ -475,8 +459,11 @@ export async function teamChatSenderCanWakeMessageRoutines(
 
   const linkedIdentity = await deps.prisma.messagingIdentity.findUnique({
     where: { provider_address: { provider: event.provider, address: event.from } },
-    select: { id: true },
+    select: { id: true, userId: true },
   });
+  // A deactivated person counts as unlinked: like anyone in the workspace, never as themselves.
+  if (linkedIdentity && (await accountDeactivated(deps.prisma, linkedIdentity.userId)))
+    return false;
 
   if (event.isDirect) return Boolean(linkedIdentity);
 
@@ -570,7 +557,7 @@ async function stopOwnerWork(
       });
     }
     return stop;
-  });
+  }, THREAD_LOCK_TRANSACTION_OPTIONS);
   await enqueueDeliverJob(deps);
   if (stop?.runIds.length) await finishThreadStop(deps, identity, target, stop);
 }
@@ -782,6 +769,13 @@ async function handleChannelEvent(
     return;
   }
 
+  // A deactivated sender's message does nothing: no invitations, memberships or relays.
+  const sender = await deps.prisma.messagingIdentity.findUnique({
+    where: { provider_address: { provider: event.provider, address: event.from } },
+    select: { userId: true },
+  });
+  if (sender && (await accountDeactivated(deps.prisma, sender.userId))) return;
+
   const participants = [...event.participants];
   if (!participants.includes(event.from)) participants.push(event.from);
 
@@ -793,10 +787,22 @@ async function handleChannelEvent(
   // and a handler whose roster is not newer than the recorded one changes no
   // membership at all: no sweep, no re-invite, no discovery. Invitations are
   // announced only after the transaction commits.
-  const rosterAt = event.participants.length > 0 ? event.rosterAt : undefined;
+  // The roster time is the platform's clock, which can run ahead of ours. Within a
+  // small skew it stays the version, so ordering and redeliveries behave as usual.
+  // Further ahead the time is bogus and the event's roster is distrusted whole, on
+  // every delivery alike: it changes no membership — no discovery, no invites, no
+  // sweep — and records no time, so it can never settle or unsettle members, and a
+  // far-future time can never sit ahead of every later real roster and freeze it.
+  const eventRosterAt = event.participants.length > 0 ? event.rosterAt : undefined;
+  const rosterTimeRejected =
+    eventRosterAt !== undefined && eventRosterAt.getTime() > Date.now() + ROSTER_TIME_SKEW_MS;
+  const rosterAt = rosterTimeRejected ? undefined : eventRosterAt;
   const invited: IdentityRow[] = [];
   let hasUnlinked = false;
   await deps.prisma.$transaction(async (tx) => {
+    // A rejected time distrusts the event's membership entirely; its message content,
+    // if any, still flows below as for any message.
+    if (rosterTimeRejected) return;
     await tx.$queryRaw`SELECT id FROM messaging_channels WHERE id = ${channel.id} FOR UPDATE`;
     if (rosterAt) {
       const settled = await tx.messagingChannel.findUniqueOrThrow({
@@ -827,8 +833,7 @@ async function handleChannelEvent(
             data: { identityId: identity.id },
           });
           if (member.status === "invited") {
-            await queueInvite(tx, channel, identity);
-            invited.push(identity);
+            if (await queueInvite(tx, channel, identity)) invited.push(identity);
           }
         }
         if (member.status === "left") {
@@ -838,8 +843,7 @@ async function handleChannelEvent(
             data: { status: "invited" },
           });
           if (identity) {
-            await queueInvite(tx, channel, identity);
-            invited.push(identity);
+            if (await queueInvite(tx, channel, identity)) invited.push(identity);
           }
         }
         if (!identity) hasUnlinked = true;
@@ -857,8 +861,7 @@ async function handleChannelEvent(
         update: {},
       });
       if (identity) {
-        await queueInvite(tx, channel, identity);
-        invited.push(identity);
+        if (await queueInvite(tx, channel, identity)) invited.push(identity);
       } else hasUnlinked = true;
     }
 
@@ -932,7 +935,7 @@ async function handleChannelEvent(
     const identity = await deps.prisma.messagingIdentity.findUnique({
       where: { id: member.identityId! },
     });
-    if (!identity) continue;
+    if (!identity || (await accountDeactivated(deps.prisma, identity.userId))) continue;
     const thread = await deps.prisma.thread.findFirst({ where: { botId: identity.botId } });
     if (!thread) continue;
     const target = {
@@ -941,33 +944,40 @@ async function handleChannelEvent(
       botId: identity.botId,
       threadId: thread.id,
     };
-    if (await wakeMessageRoutines(deps, target, event)) continue;
-    // Group runs carry only text; a bare photo would start an empty prompt.
-    if (!event.content.trim()) continue;
+    // One member's Space being deleted must not keep the message from the others.
+    try {
+      if (await wakeMessageRoutines(deps, target, event)) continue;
+      // Group runs carry only text; a bare photo would start an empty prompt.
+      if (!event.content.trim()) continue;
 
-    const sent = await deps.events.sendUserMessage({
-      spaceId: identity.spaceId,
-      threadId: thread.id,
-      botId: identity.botId,
-      userId: identity.userId,
-      blocks: [block],
-      prompt,
-      trigger: "messaging",
-      clientNonce: `messaging:${event.provider}:${event.handle}`,
-    });
-    if (sent.runId) {
-      await deps.jobs.enqueue(runContinueJob(sent.runId)).catch((error) => {
-        getLogger().error("messaging channel fan-out enqueue error", error);
+      const sent = await deps.events.sendUserMessage({
+        spaceId: identity.spaceId,
+        threadId: thread.id,
+        botId: identity.botId,
+        userId: identity.userId,
+        blocks: [block],
+        prompt,
+        trigger: "messaging",
+        clientNonce: `messaging:${event.provider}:${event.handle}`,
       });
+      if (sent.runId) {
+        await deps.jobs.enqueue(runContinueJob(sent.runId)).catch((error) => {
+          getLogger().error("messaging channel fan-out enqueue error", error);
+        });
+      }
+    } catch (error) {
+      droppedWhileDeleting(error);
     }
   }
 }
 
 async function queueInvite(
-  db: Pick<PrismaClient, "messagingOutbound">,
+  db: Pick<PrismaClient, "messagingOutbound" | "user">,
   channel: { id: string; name: string | null },
   identity: IdentityRow,
-): Promise<void> {
+): Promise<boolean> {
+  // A deactivated person is not invited anywhere.
+  if (await accountDeactivated(db, identity.userId)) return false;
   const name = channel.name ?? "a group chat";
   // A returning member restarts the approval cycle; clear the prior invite
   // row or skipDuplicates would leave them with no prompt to answer.
@@ -985,6 +995,7 @@ async function queueInvite(
     ],
     skipDuplicates: true,
   });
+  return true;
 }
 
 async function announceInvite(
