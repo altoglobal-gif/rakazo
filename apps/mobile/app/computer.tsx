@@ -16,6 +16,7 @@ import {
   ActivityIndicator,
   AppState,
   Modal,
+  Platform,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -23,7 +24,12 @@ import {
   useWindowDimensions,
   View,
 } from "react-native";
-import { KeyboardAvoidingView } from "react-native-keyboard-controller";
+import {
+  AndroidSoftInputModes,
+  KeyboardAvoidingView,
+  KeyboardController,
+  useKeyboardState,
+} from "react-native-keyboard-controller";
 import {
   initialWindowMetrics,
   SafeAreaProvider,
@@ -137,6 +143,10 @@ export default function Computer() {
     !computer.controlledByOther;
   // Propped open like a laptop, the desktop stays above the fold and the keys go below it.
   const tabletop = hasControl ? tabletopLayout(windowSize.width, windowSize.height, folds) : null;
+  // The full window's desktop, turned to fill the display and watched from its short edge.
+  const screenTurned = computerOpen && screenRotated && !tabletop;
+  const keyboardVisible = useKeyboardState((state) => state.isVisible);
+  const keyboardHeight = useKeyboardState((state) => state.height);
   const screenVisible =
     computerOpen && computer?.state === "running" && Boolean(embeddedScreenUrl) && !screenError;
   const loadedScreenUrl = nextLoadedScreenUrl(
@@ -203,14 +213,21 @@ export default function Computer() {
   // The rotated desktop is watched sideways, so the device itself turns with it: a real
   // landscape orientation keeps the soft keyboard, the insets and the resize in the
   // rotated frame instead of fighting them from portrait. The transform below only
-  // covers the flip itself, or a device that refuses the lock.
+  // covers a modal that refuses to turn — Android dialog windows often stay portrait
+  // whatever the activity asks for.
   useEffect(() => {
-    if (!computerOpen || !screenRotated || tabletop) return;
+    if (!screenTurned) return;
     void lockAsync(OrientationLock.LANDSCAPE).catch(() => undefined);
+    if (Platform.OS === "android") {
+      // The keyboard must float over the turned desktop instead of resizing it to a
+      // sliver; the bar below rides above the floating keyboard.
+      KeyboardController.setInputMode(AndroidSoftInputModes.SOFT_INPUT_ADJUST_NOTHING);
+    }
     return () => {
+      if (Platform.OS === "android") KeyboardController.setDefaultMode();
       void unlockAsync().catch(() => undefined);
     };
-  }, [computerOpen, screenRotated, tabletop]);
+  }, [screenTurned]);
 
   // The computer status poll and the live WebView are expensive; neither should
   // run while the app is in the background.
@@ -653,7 +670,7 @@ export default function Computer() {
         <SafeAreaProvider initialMetrics={initialWindowMetrics}>
           <KeyboardAvoidingView
             behavior="height"
-            enabled={!tabletop}
+            enabled={!tabletop && !screenTurned}
             style={{ flex: 1, backgroundColor: tokens.background }}
           >
             <SafeAreaView
@@ -750,7 +767,7 @@ export default function Computer() {
               </Text>
             ) : null}
             <View
-              style={{ flex: 1, backgroundColor: tokens.card }}
+              style={{ flex: 1, backgroundColor: tokens.card, overflow: "hidden" }}
               onLayout={(event) => {
                 const { width, height } = event.nativeEvent.layout;
                 setScreenBox((box) =>
@@ -761,18 +778,17 @@ export default function Computer() {
               {foreground && loadedScreenUrl ? (
                 <View
                   style={
-                    screenRotated && screenBox && screenBox.height > screenBox.width
-                      ? {
-                          // While the device is still portrait — mid-flip or refusing the
-                          // orientation lock — a native transform keeps touch mapping
-                          // correct while the landscape desktop fills the portrait screen.
-                          position: "absolute",
-                          top: (screenBox.height - screenBox.width) / 2,
-                          left: (screenBox.width - screenBox.height) / 2,
-                          width: screenBox.height,
-                          height: screenBox.width,
-                          transform: [{ rotate: "90deg" }],
-                        }
+                    screenRotated && screenBox
+                      ? coverFrame(
+                          screenBox,
+                          computer?.screenWidth && computer?.screenHeight
+                            ? computer.screenWidth / computer.screenHeight
+                            : 16 / 10,
+                          // While the modal is still portrait — mid-flip or refusing the
+                          // orientation lock — the frame is laid out swapped and turned
+                          // with a native transform, so touch keeps mapping correctly.
+                          screenBox.height > screenBox.width,
+                        )
                       : { flex: 1 }
                   }
                 >
@@ -821,6 +837,20 @@ export default function Computer() {
                   {keyboardBar}
                 </KeyboardAvoidingView>
               </View>
+            ) : screenTurned && keyboardBar ? (
+              // The turned desktop fills the window and the keyboard floats over it, so the
+              // bar rides above the keyboard instead of pushing anything around.
+              <View
+                pointerEvents="box-none"
+                style={{
+                  position: "absolute",
+                  left: 0,
+                  right: 0,
+                  bottom: keyboardVisible && keyboardHeight > 0 ? keyboardHeight : 0,
+                }}
+              >
+                {keyboardBar}
+              </View>
             ) : (
               keyboardBar
             )}
@@ -829,6 +859,35 @@ export default function Computer() {
       </Modal>
     </ScrollView>
   );
+}
+
+/** A screen frame that covers the box in the framebuffer's own aspect: the desktop's
+ * outer edges crop off instead of the display letterboxing with dead space. `turned`
+ * lays the frame out swapped and rotates it, for a modal that refused to go landscape. */
+function coverFrame(
+  box: { width: number; height: number },
+  aspect: number,
+  turned: boolean,
+): {
+  position: "absolute";
+  top: number;
+  left: number;
+  width: number;
+  height: number;
+  transform?: { rotate: string }[];
+} {
+  let width = turned ? box.height : box.width;
+  let height = turned ? box.width : box.height;
+  if (width / height < aspect) width = height * aspect;
+  else height = width / aspect;
+  return {
+    position: "absolute",
+    top: (box.height - height) / 2,
+    left: (box.width - width) / 2,
+    width,
+    height,
+    ...(turned ? { transform: [{ rotate: "90deg" }] } : {}),
+  };
 }
 
 function ComputerReleaseActions({

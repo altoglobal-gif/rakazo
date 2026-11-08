@@ -98,6 +98,7 @@ vi.mock("react-native", () => {
       },
     },
     Modal: MockModal,
+    Platform: { OS: "android" },
     StyleSheet: { create: <T,>(styles: T) => styles },
     Pressable: MockPressable,
     ScrollView: MockView,
@@ -110,9 +111,19 @@ vi.mock("react-native", () => {
 vi.mock("./app-foreground", () => ({
   useAppForeground: () => foreground.value,
 }));
+const keyboardMode = vi.hoisted(() => ({ input: [] as number[], defaults: 0 }));
 vi.mock("react-native-keyboard-controller", () => ({
   KeyboardAvoidingView: ({ children, enabled }: { children: ReactNode; enabled?: boolean }) =>
     createElement("div", { "data-avoids-keyboard": String(enabled ?? true) }, children),
+  AndroidSoftInputModes: { SOFT_INPUT_ADJUST_NOTHING: 48 },
+  KeyboardController: {
+    setInputMode: (mode: number) => keyboardMode.input.push(mode),
+    setDefaultMode: () => {
+      keyboardMode.defaults += 1;
+    },
+  },
+  useKeyboardState: (select: (state: { isVisible: boolean; height: number }) => unknown) =>
+    select({ isVisible: false, height: 0 }),
 }));
 vi.mock("../components/computer-keyboard-bar", () => ({
   ComputerKeyboardBar: (props: { active: boolean }) =>
@@ -303,6 +314,8 @@ describe("computer screen", () => {
     screens.mounts = 0;
     orientation.locks = [];
     orientation.unlocks = 0;
+    keyboardMode.input = [];
+    keyboardMode.defaults = 0;
     vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   });
 
@@ -371,12 +384,16 @@ describe("computer screen", () => {
     await settle();
     expect(orientation.locks).toEqual(["landscape"]);
     expect(orientation.unlocks).toBe(0);
+    // The keyboard floats over the turned desktop instead of resizing it away.
+    expect(keyboardMode.input).toEqual([48]);
+    expect(keyboardMode.defaults).toBe(0);
 
     await act(async () =>
       view.querySelector<HTMLButtonElement>('[aria-label="Close computer"]')?.click(),
     );
     await settle();
     expect(orientation.unlocks).toBe(1);
+    expect(keyboardMode.defaults).toBe(1);
   });
 
   it("keeps an unreachable screen's error while later reads rotate its token", async () => {

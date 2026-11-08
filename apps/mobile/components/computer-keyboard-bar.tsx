@@ -162,6 +162,8 @@ export function ComputerKeyboardBar({
         autoCapitalize="none"
         autoCorrect={false}
         spellCheck={false}
+        // Landscape IMEs otherwise take the whole screen with an extract field.
+        disableFullscreenUI
         keyboardAppearance={appearance}
         accessibilityLabel={t("Computer keyboard")}
         style={styles.input}
