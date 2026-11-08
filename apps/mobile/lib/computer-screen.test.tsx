@@ -163,6 +163,17 @@ vi.mock("expo-router", () => ({
   useRouter: () => ({ push: routerPush }),
 }));
 
+const orientation = vi.hoisted(() => ({ locks: [] as string[], unlocks: 0 }));
+vi.mock("expo-screen-orientation", () => ({
+  OrientationLock: { LANDSCAPE: "landscape" },
+  lockAsync: async (lock: string) => {
+    orientation.locks.push(lock);
+  },
+  unlockAsync: async () => {
+    orientation.unlocks += 1;
+  },
+}));
+
 vi.mock("../lib/fold-regions", () => ({ useFoldRegions: () => folds.regions }));
 
 vi.mock("../components/native-action-button", () => {
@@ -290,6 +301,8 @@ describe("computer screen", () => {
     foreground.value = true;
     folds.regions = [];
     screens.mounts = 0;
+    orientation.locks = [];
+    orientation.unlocks = 0;
     vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   });
 
@@ -343,6 +356,27 @@ describe("computer screen", () => {
     const window = view.querySelector("section");
     expect(window?.textContent).toContain("Could not load the desktop.");
     expect(window?.textContent).toContain("Retry screen");
+  });
+
+  it("turns the device with the rotated screen, and releases it when the window closes", async () => {
+    respond(botWorking);
+    const view = await render();
+    await act(async () => preview(view).click());
+    await settle();
+    expect(orientation.locks).toEqual([]);
+
+    const rotate = view.querySelector<HTMLButtonElement>('[aria-label="Rotate screen"]');
+    expect(rotate).not.toBeNull();
+    await act(async () => rotate?.click());
+    await settle();
+    expect(orientation.locks).toEqual(["landscape"]);
+    expect(orientation.unlocks).toBe(0);
+
+    await act(async () =>
+      view.querySelector<HTMLButtonElement>('[aria-label="Close computer"]')?.click(),
+    );
+    await settle();
+    expect(orientation.unlocks).toBe(1);
   });
 
   it("keeps an unreachable screen's error while later reads rotate its token", async () => {

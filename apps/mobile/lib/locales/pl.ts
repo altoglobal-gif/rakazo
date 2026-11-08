@@ -878,7 +878,6 @@ export const PL_MESSAGES: Record<string, string> = {
   Team: "Zespół",
   "Rotate screen": "Obróć ekran",
   "Upright screen": "Ekran pionowo",
-  "{name} options": "Opcje: {name}",
   "Custom voice…": "Własny głos…",
   "Custom voice": "Własny głos",
   "Voice name or ID": "Nazwa lub ID głosu",

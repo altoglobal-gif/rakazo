@@ -9,6 +9,7 @@ import {
   waitForScreenPage,
 } from "@rakazo/core";
 import { useLocalSearchParams, useNavigation, useRouter } from "expo-router";
+import { lockAsync, OrientationLock, unlockAsync } from "expo-screen-orientation";
 import type { RefObject } from "react";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import {
@@ -198,6 +199,18 @@ export default function Computer() {
     if (botId) refreshController.start();
     return () => refreshController.dispose();
   }, [botId, refreshController]);
+
+  // The rotated desktop is watched sideways, so the device itself turns with it: a real
+  // landscape orientation keeps the soft keyboard, the insets and the resize in the
+  // rotated frame instead of fighting them from portrait. The transform below only
+  // covers the flip itself, or a device that refuses the lock.
+  useEffect(() => {
+    if (!computerOpen || !screenRotated || tabletop) return;
+    void lockAsync(OrientationLock.LANDSCAPE).catch(() => undefined);
+    return () => {
+      void unlockAsync().catch(() => undefined);
+    };
+  }, [computerOpen, screenRotated, tabletop]);
 
   // The computer status poll and the live WebView are expensive; neither should
   // run while the app is in the background.
@@ -748,10 +761,11 @@ export default function Computer() {
               {foreground && loadedScreenUrl ? (
                 <View
                   style={
-                    screenRotated && screenBox
+                    screenRotated && screenBox && screenBox.height > screenBox.width
                       ? {
-                          // A native transform keeps touch mapping correct while the
-                          // landscape desktop fills the portrait screen.
+                          // While the device is still portrait — mid-flip or refusing the
+                          // orientation lock — a native transform keeps touch mapping
+                          // correct while the landscape desktop fills the portrait screen.
                           position: "absolute",
                           top: (screenBox.height - screenBox.width) / 2,
                           left: (screenBox.width - screenBox.height) / 2,

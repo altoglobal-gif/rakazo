@@ -24,7 +24,15 @@ import { createModelRoleSettings, modelRoleListPatch } from "@rakazo/core";
 import type { Href } from "expo-router";
 import type { ReactNode } from "react";
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
-import { AccessibilityInfo, PanResponder, StyleSheet, Text, Vibration, View } from "react-native";
+import {
+  AccessibilityInfo,
+  PanResponder,
+  Platform,
+  StyleSheet,
+  Text,
+  Vibration,
+  View,
+} from "react-native";
 import type { RpcArgs } from "../lib/api";
 import { captureApiRequestContext, currentApiBase, rpc } from "../lib/api";
 import { mobileTokens } from "../lib/appearance";
@@ -32,6 +40,7 @@ import { useI18n } from "../lib/i18n";
 import type { ModelPickerRequest } from "../lib/model-picker-selection";
 import { native, useMobileTokens, useThemedStyles } from "../lib/native";
 import { thinkingLevelLabel } from "../lib/thinking-level";
+import type { NativeMenuHandle } from "./native-menu";
 import { NativeMenu } from "./native-menu";
 import { NativeSymbol } from "./native-symbol";
 import { SettingsGroup, SettingsRow } from "./settings-group";
@@ -524,27 +533,31 @@ export function ModelRoleSettings({
             }
           >
             {markerAbove ? marker : null}
-            <SettingsRow
-              accessibilityRole="button"
-              leading={ordered ? number(index + offset) : undefined}
-              title={name}
-              detail={detail}
-              disabled={busy}
-              onPress={() => pick(index)}
-              onLongPress={
-                draggable ? (event) => grabRow(index, event.nativeEvent.pageY) : undefined
-              }
-              accessibilityActions={accessibilityActions}
-              onAccessibilityAction={({ nativeEvent }) => act(index, nativeEvent.actionName)}
-              trailing={
-                <RowMenuButton
+            {/* The row opens the picker; its menu stays outside that press target. */}
+            <View style={rowMenuStyles.row}>
+              <View style={rowMenuStyles.content}>
+                <SettingsRow
+                  accessibilityRole="button"
+                  leading={ordered ? number(index + offset) : undefined}
                   title={name}
-                  actions={actions}
+                  detail={detail}
                   disabled={busy}
-                  onAction={(id) => act(index, id)}
+                  onPress={() => pick(index)}
+                  onLongPress={
+                    draggable ? (event) => grabRow(index, event.nativeEvent.pageY) : undefined
+                  }
+                  accessibilityActions={accessibilityActions}
+                  onAccessibilityAction={({ nativeEvent }) => act(index, nativeEvent.actionName)}
                 />
-              }
-            />
+              </View>
+              <RowMenuButton
+                title={name}
+                connection={connectionName(choice)}
+                actions={actions}
+                disabled={busy}
+                onAction={(id) => act(index, id)}
+              />
+            </View>
             {markerBelow ? marker : null}
           </View>
         );
@@ -577,21 +590,26 @@ export function ModelRoleSettings({
 /** The visible ⋯ at the end of a row; one tap opens the same menu a long-press would. */
 export function RowMenuButton({
   title,
+  connection,
   actions,
   onAction,
   disabled = false,
 }: {
   title: string;
+  connection: string;
   actions: MenuAction[];
   onAction: (id: string) => void;
   disabled?: boolean;
 }) {
   const { t } = useI18n();
   const tokens = useMobileTokens();
+  const menu = useRef<NativeMenuHandle>(null);
+  const label = t("{name} options", { name: withConnectionName(title, connection) });
   return (
     <NativeMenu
+      ref={menu}
       title={title}
-      accessibilityLabel={t("{name} options", { name: title })}
+      accessibilityLabel={label}
       actions={
         disabled
           ? actions.map((action) => ({
@@ -604,8 +622,20 @@ export function RowMenuButton({
       style={rowMenuStyles.button}
     >
       <View
-        accessibilityElementsHidden
-        importantForAccessibility="no-hide-descendants"
+        accessible
+        accessibilityRole="button"
+        accessibilityLabel={label}
+        accessibilityState={{ disabled }}
+        accessibilityActions={
+          Platform.OS === "android" && !disabled ? [{ name: "activate" }] : undefined
+        }
+        onAccessibilityAction={
+          Platform.OS === "android"
+            ? ({ nativeEvent }) => {
+                if (!disabled && nativeEvent.actionName === "activate") menu.current?.show();
+              }
+            : undefined
+        }
         style={rowMenuStyles.buttonInner}
       >
         <NativeSymbol
@@ -653,6 +683,8 @@ export function RowMenu({
 
 const rowMenuStyles = StyleSheet.create({
   fullWidth: { width: "100%" },
+  row: { flexDirection: "row", alignItems: "center" },
+  content: { flex: 1 },
   button: { borderRadius: 18, overflow: "hidden" },
   buttonInner: { width: 36, height: 36, alignItems: "center", justifyContent: "center" },
 });

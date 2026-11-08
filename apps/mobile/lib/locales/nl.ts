@@ -878,7 +878,6 @@ export const NL_MESSAGES: Record<string, string> = {
   "Rotate screen": "Scherm draaien",
   "Upright screen": "Scherm rechtop",
   "Teach a task": "Een taak aanleren",
-  "{name} options": "Opties voor {name}",
   "Custom voice…": "Eigen stem…",
   "Custom voice": "Eigen stem",
   "Voice name or ID": "Naam of ID van de stem",

@@ -312,6 +312,8 @@ vi.mock("react-native", () => {
     PanResponder: { create: () => ({ panHandlers: {} }) },
     Vibration: { vibrate: vi.fn() },
     Linking: { openURL: vi.fn() },
+    Modal: ({ visible, children }: { visible?: boolean; children?: ReactNode }) =>
+      visible ? createElement("div", { "data-modal": "true" }, children) : null,
     StyleSheet: { create: (styles: unknown) => styles, hairlineWidth: 1 },
     ScrollView: view,
     View: view,
@@ -1076,7 +1078,9 @@ describe("model role lists", () => {
     await renderModels();
     const activate = mocks.rowAccessibilityActions.get("Model 1 (OpenRouter) options")!;
     act(() => activate({ nativeEvent: { actionName: "activate" } }));
-    expect(mocks.showMenu).toHaveBeenCalledExactlyOnceWith("Model 1");
+    // On Android the menu is our bottom sheet, so its items have appeared.
+    expect(container.querySelector("[data-modal]")).not.toBeNull();
+    expect(container.textContent).toContain("Manage OpenRouter");
   });
 
   it("keeps the native menu outside the model picker's press target", async () => {

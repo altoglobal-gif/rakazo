@@ -1266,7 +1266,6 @@ export const JA_MESSAGES: Record<string, string> = {
     "ライブデモの録画には、フルコンピュータービューのあるデスクトップ版またはWeb版が必要です。チャットから保存済みのスキルを実行するようボットに依頼することはできます。",
   Submitted: "送信済み",
   "Teach a task": "タスクを教える",
-  "{name} options": "{name}のオプション",
   "Custom voice…": "カスタム音声…",
   "Custom voice": "カスタム音声",
   "Voice name or ID": "音声名またはID",

@@ -1,7 +1,7 @@
 import type { MenuAction } from "@expo/ui/community/menu";
 import { MenuView } from "@expo/ui/community/menu";
-import type { ReactNode } from "react";
-import { useState } from "react";
+import type { ReactNode, Ref } from "react";
+import { forwardRef, useImperativeHandle, useState } from "react";
 import type { StyleProp, ViewStyle } from "react-native";
 import { Modal, Platform, Pressable, StyleSheet, Text, View } from "react-native";
 import { mobileTokens } from "../lib/appearance";
@@ -11,29 +11,39 @@ import { useThemedStyles } from "../lib/native";
 /** A menu item with an optional explanation line under its title, like the web dropdowns. */
 export type NativeMenuItem = MenuAction & { description?: string };
 
+/** Opens the menu from code, for accessibility activation. */
+export type NativeMenuHandle = { show: () => void };
+
 /** The native menu. iOS keeps the SwiftUI dropdown; Android opens a plain bottom sheet,
  * because @expo/ui's Compose menu does not open in every production binary (a running
  * APK can lack its native views, leaving a trigger that taps into nothing). */
-export function NativeMenu({
-  title,
-  actions,
-  onPressAction,
-  shouldOpenOnLongPress = false,
-  accessibilityLabel = title,
-  style,
-  children,
-}: {
-  title: string;
-  actions: NativeMenuItem[];
-  onPressAction: (id: string) => void;
-  shouldOpenOnLongPress?: boolean;
-  accessibilityLabel?: string;
-  style?: StyleProp<ViewStyle>;
-  children: ReactNode;
-}) {
+export const NativeMenu = forwardRef<
+  NativeMenuHandle,
+  {
+    title: string;
+    actions: NativeMenuItem[];
+    onPressAction: (id: string) => void;
+    shouldOpenOnLongPress?: boolean;
+    accessibilityLabel?: string;
+    style?: StyleProp<ViewStyle>;
+    children: ReactNode;
+  }
+>(function NativeMenu(
+  {
+    title,
+    actions,
+    onPressAction,
+    shouldOpenOnLongPress = false,
+    accessibilityLabel = title,
+    style,
+    children,
+  },
+  ref,
+) {
   if (Platform.OS !== "android") {
     return (
       <MenuView
+        ref={ref as Ref<{ show: () => void }>}
         shouldOpenOnLongPress={shouldOpenOnLongPress}
         title={title}
         actions={actions.map((action) =>
@@ -62,6 +72,7 @@ export function NativeMenu({
   }
   return (
     <AndroidMenuSheet
+      ref={ref}
       title={title}
       actions={actions}
       onPressAction={onPressAction}
@@ -72,7 +83,7 @@ export function NativeMenu({
       {children}
     </AndroidMenuSheet>
   );
-}
+});
 
 /** One row of the sheet. */
 function MenuRow({ action, onPress }: { action: NativeMenuItem; onPress: (id: string) => void }) {
@@ -112,26 +123,25 @@ function MenuRow({ action, onPress }: { action: NativeMenuItem; onPress: (id: st
   );
 }
 
-function AndroidMenuSheet({
-  title,
-  actions,
-  onPressAction,
-  shouldOpenOnLongPress,
-  accessibilityLabel,
-  style,
-  children,
-}: {
-  title: string;
-  actions: NativeMenuItem[];
-  onPressAction: (id: string) => void;
-  shouldOpenOnLongPress: boolean;
-  accessibilityLabel: string;
-  style?: StyleProp<ViewStyle>;
-  children: ReactNode;
-}) {
+const AndroidMenuSheet = forwardRef<
+  NativeMenuHandle,
+  {
+    title: string;
+    actions: NativeMenuItem[];
+    onPressAction: (id: string) => void;
+    shouldOpenOnLongPress: boolean;
+    accessibilityLabel: string;
+    style?: StyleProp<ViewStyle>;
+    children: ReactNode;
+  }
+>(function AndroidMenuSheet(
+  { title, actions, onPressAction, shouldOpenOnLongPress, accessibilityLabel, style, children },
+  ref,
+) {
   const { t } = useI18n();
   const styles = useThemedStyles(createStyles);
   const [open, setOpen] = useState(false);
+  useImperativeHandle(ref, () => ({ show: () => setOpen(true) }), []);
 
   function press(id: string) {
     setOpen(false);
@@ -194,7 +204,7 @@ function AndroidMenuSheet({
       </Modal>
     </>
   );
-}
+});
 
 function createStyles() {
   const tokens = mobileTokens();

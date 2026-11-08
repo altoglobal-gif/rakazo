@@ -894,7 +894,6 @@ export const ZH_TW_MESSAGES: Record<string, string> = {
   "sk-…": "sk-…",
   Submitted: "已提交",
   "Teach a task": "教一個任務",
-  "{name} options": "{name}的選項",
   "Custom voice…": "自訂語音…",
   "Custom voice": "自訂語音",
   "Voice name or ID": "語音名稱或 ID",

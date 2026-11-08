@@ -237,6 +237,8 @@ vi.mock("react-native", () => {
     PlatformColor: (name: string) => name,
     useWindowDimensions: () => ({ width: 390, height: 844, scale: 3, fontScale: 1 }),
     Linking: { openURL: vi.fn() },
+    PanResponder: { create: () => ({ panHandlers: {} }) },
+    Vibration: { vibrate: vi.fn() },
     StyleSheet: { create: (styles: unknown) => styles, hairlineWidth: 1 },
     ScrollView: view,
     View: view,

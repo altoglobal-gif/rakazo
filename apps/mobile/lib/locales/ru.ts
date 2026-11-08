@@ -954,7 +954,6 @@ export const RU_MESSAGES: Record<string, string> = {
   "sk-…": "sk-…",
   Submitted: "Отправлено",
   "Teach a task": "Научить задачу",
-  "{name} options": "Опции: {name}",
   "Custom voice…": "Свой голос…",
   "Custom voice": "Свой голос",
   "Voice name or ID": "Имя или ID голоса",

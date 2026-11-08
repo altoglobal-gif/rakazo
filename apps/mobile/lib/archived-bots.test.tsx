@@ -27,6 +27,11 @@ const { rpc, groupRpc, alert, push, closeSettingsSheet, navigation, focus, selec
 const bot = { id: "bot-fixture", name: "Fixture", spaceId: "space-a" } as MobileBot;
 const group = { id: "group-fixture", name: "Crew", spaceId: "space-a" } as MobileGroup;
 vi.mock("./side-insets", () => ({ useSideInsets: () => ({}) }));
+vi.mock("./appearance", () => ({ mobileTokens: () => ({}) }));
+vi.mock("expo-secure-store", () => ({
+  getItemAsync: vi.fn(async () => null),
+  setItemAsync: vi.fn(async () => undefined),
+}));
 vi.mock("./api-auth", () => ({}));
 vi.mock("./api-live", () => ({}));
 vi.mock("./api", () => ({

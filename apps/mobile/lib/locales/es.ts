@@ -853,7 +853,6 @@ export const ES_MESSAGES: Record<string, string> = {
   "Export this week's list from the CRM and drop it in the shared folder":
     "Exporta la lista de esta semana del CRM y déjala en la carpeta compartida",
   "Demonstrate the task on the screen": "Demuestra la tarea en la pantalla",
-  "{name} options": "Opciones de {name}",
   "Custom voice…": "Voz personalizada…",
   "Custom voice": "Voz personalizada",
   "Voice name or ID": "Nombre o ID de voz",

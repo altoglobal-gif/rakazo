@@ -933,7 +933,6 @@ export const ZH_MESSAGES: Record<string, string> = {
   "sk-…": "sk-…",
   Submitted: "已提交",
   "Teach a task": "教一个任务",
-  "{name} options": "{name}的选项",
   "Custom voice…": "自定义声音…",
   "Custom voice": "自定义声音",
   "Voice name or ID": "声音名称或 ID",
