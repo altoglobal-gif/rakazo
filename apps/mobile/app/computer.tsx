@@ -147,6 +147,13 @@ export default function Computer() {
   const screenTurned = computerOpen && screenRotated && !tabletop;
   const keyboardVisible = useKeyboardState((state) => state.isVisible);
   const keyboardHeight = useKeyboardState((state) => state.height);
+  const screenAspect =
+    computer?.screenWidth && computer?.screenHeight
+      ? computer.screenWidth / computer.screenHeight
+      : 16 / 10;
+  // Once the orientation lock takes hold the window is really landscape: the desktop
+  // shows every pixel at full height in the middle, flanked by its own controls.
+  const turnedLandscape = screenTurned && screenBox != null && screenBox.width > screenBox.height;
   const screenVisible =
     computerOpen && computer?.state === "running" && Boolean(embeddedScreenUrl) && !screenError;
   const loadedScreenUrl = nextLoadedScreenUrl(
@@ -456,6 +463,16 @@ export default function Computer() {
       }}
     />
   ) : null;
+  // The same keys as a slim column that flanks the turned desktop.
+  const keyboardColumn = hasControl ? (
+    <ComputerKeyboardBar
+      vertical
+      active={computerOpen && !releasing}
+      onCommand={(command) => {
+        injectKeyboardCommands(keyboardGate.current.bridge.push(command));
+      }}
+    />
+  ) : null;
   const placeholder =
     screenError ??
     (unreachableScreen
@@ -673,186 +690,300 @@ export default function Computer() {
             enabled={!tabletop && !screenTurned}
             style={{ flex: 1, backgroundColor: tokens.background }}
           >
-            <SafeAreaView
-              edges={["top", "left", "right"]}
-              style={{
-                flexDirection: "row",
-                alignItems: "center",
-                justifyContent: "space-between",
-                gap: 12,
-                borderBottomWidth: iosAtLeast(26) ? 0 : 1,
-                borderBottomColor: tokens.border,
-                paddingHorizontal: 14,
-                paddingVertical: 4,
-              }}
-            >
-              <View
-                style={{
-                  flex: 1,
-                  minWidth: 0,
-                  flexDirection: "row",
-                  alignItems: "center",
-                  gap: 8,
-                }}
+            {turnedLandscape ? (
+              <SafeAreaView
+                edges={["top", "bottom", "left", "right"]}
+                style={{ flex: 1, flexDirection: "row", backgroundColor: tokens.card }}
               >
-                <Text
-                  numberOfLines={1}
-                  style={{
-                    flexShrink: 1,
-                    color: tokens.foreground,
-                    fontSize: 15.5,
-                    fontWeight: "500",
+                {/* The window's controls move into a side band the desktop cannot use. */}
+                <View style={styles.turnedBand}>
+                  <Text numberOfLines={3} style={[styles.turnedName, { color: tokens.foreground }]}>
+                    {label}
+                  </Text>
+                  {hasControl ? (
+                    <ComputerReleaseActions
+                      vertical
+                      takeoverRequested={computer?.takeoverRequested ?? false}
+                      onRelease={releaseComputer}
+                    />
+                  ) : (
+                    <NativeActionButton
+                      label={t("Take control")}
+                      prominence="secondary"
+                      size="compact"
+                      onPress={() =>
+                        void bootComputer({ takeControl: true, showProgress: false }).catch(
+                          () => undefined,
+                        )
+                      }
+                    />
+                  )}
+                  <GlassIconButton
+                    accessibilityLabel={t("Upright screen")}
+                    onPress={() => setScreenRotated(false)}
+                    ios="rotate.left"
+                    android="phone-portrait-outline"
+                    size={40}
+                    iconSize={18}
+                  />
+                  <GlassIconButton
+                    accessibilityLabel={t("Close computer")}
+                    onPress={() => setComputerOpen(false)}
+                    ios="xmark"
+                    android="close"
+                    size={40}
+                    iconSize={18}
+                  />
+                </View>
+                <View
+                  style={{ flex: 1, backgroundColor: tokens.card, overflow: "hidden" }}
+                  onLayout={(event) => {
+                    const { width, height } = event.nativeEvent.layout;
+                    setScreenBox((box) =>
+                      box && box.width === width && box.height === height ? box : { width, height },
+                    );
                   }}
                 >
-                  {label}
-                </Text>
-                {hasControl ? (
+                  {foreground && loadedScreenUrl ? (
+                    <View style={screenBox ? fitFrame(screenBox, screenAspect) : { flex: 1 }}>
+                      <ScreenWebView
+                        key={screenReload}
+                        url={loadedScreenUrl}
+                        interactive={hasControl}
+                        nativeKeyboard={hasControl}
+                        keyboardSession={keyboardSession}
+                        webViewRef={screenWebViewRef}
+                        onKeyboardMessage={(data) => {
+                          const gate = keyboardGate.current;
+                          if (!isComputerKeyboardReadyMessage(data, String(gate.session))) return;
+                          injectKeyboardCommands(gate.bridge.ready());
+                        }}
+                        onScreenState={onScreenState}
+                        onLoadStart={onScreenLoadStart}
+                        onRendererLost={() => void reloadScreen()}
+                        onError={() => {
+                          refreshController.invalidateScreen();
+                          setScreenOriginError(true);
+                          setScreenError(
+                            t(
+                              "Could not load the desktop. This device cannot reach the screen URL.",
+                            ),
+                          );
+                        }}
+                      />
+                    </View>
+                  ) : (
+                    <View
+                      style={{
+                        flex: 1,
+                        alignItems: "center",
+                        justifyContent: "center",
+                        padding: 16,
+                      }}
+                    >
+                      <Text style={{ color: tokens.mutedForeground, textAlign: "center" }}>
+                        {placeholder}
+                      </Text>
+                      {retryScreenAction}
+                    </View>
+                  )}
+                </View>
+                {keyboardColumn}
+              </SafeAreaView>
+            ) : (
+              <>
+                <SafeAreaView
+                  edges={["top", "left", "right"]}
+                  style={{
+                    flexDirection: "row",
+                    alignItems: "center",
+                    justifyContent: "space-between",
+                    gap: 12,
+                    borderBottomWidth: iosAtLeast(26) ? 0 : 1,
+                    borderBottomColor: tokens.border,
+                    paddingHorizontal: 14,
+                    paddingVertical: 4,
+                  }}
+                >
                   <View
                     style={{
-                      borderRadius: 999,
-                      backgroundColor: tokens.muted,
-                      paddingHorizontal: 9,
-                      paddingVertical: 3,
+                      flex: 1,
+                      minWidth: 0,
+                      flexDirection: "row",
+                      alignItems: "center",
+                      gap: 8,
                     }}
                   >
-                    <Text numberOfLines={1} style={{ color: tokens.success, fontSize: 12 }}>
-                      {t("You have control")}
+                    <Text
+                      numberOfLines={1}
+                      style={{
+                        flexShrink: 1,
+                        color: tokens.foreground,
+                        fontSize: 15.5,
+                        fontWeight: "500",
+                      }}
+                    >
+                      {label}
                     </Text>
+                    {hasControl ? (
+                      <View
+                        style={{
+                          borderRadius: 999,
+                          backgroundColor: tokens.muted,
+                          paddingHorizontal: 9,
+                          paddingVertical: 3,
+                        }}
+                      >
+                        <Text numberOfLines={1} style={{ color: tokens.success, fontSize: 12 }}>
+                          {t("You have control")}
+                        </Text>
+                      </View>
+                    ) : null}
                   </View>
-                ) : null}
-              </View>
-              <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
-                {hasControl ? (
-                  <ComputerReleaseActions
-                    takeoverRequested={computer?.takeoverRequested ?? false}
-                    onRelease={releaseComputer}
-                  />
-                ) : (
-                  <NativeActionButton
-                    label={t("Take control")}
-                    prominence="secondary"
-                    fill={false}
-                    style={{ alignSelf: "center" }}
-                    onPress={() =>
-                      void bootComputer({ takeControl: true, showProgress: false }).catch(
-                        () => undefined,
-                      )
-                    }
-                  />
-                )}
-                <GlassIconButton
-                  accessibilityLabel={screenRotated ? t("Upright screen") : t("Rotate screen")}
-                  onPress={() => setScreenRotated((value) => !value)}
-                  ios={screenRotated ? "rotate.left" : "rotate.right"}
-                  android={screenRotated ? "phone-portrait-outline" : "phone-landscape-outline"}
-                  size={36}
-                  iconSize={16}
-                />
-                <GlassIconButton
-                  accessibilityLabel={t("Close computer")}
-                  onPress={() => setComputerOpen(false)}
-                  ios="xmark"
-                  android="close"
-                  size={36}
-                  iconSize={16}
-                />
-              </View>
-            </SafeAreaView>
-            {hasControl && computer?.shared ? (
-              <Text
-                testID="computer-shared-browser"
-                style={[styles.sharedBrowser, { color: tokens.mutedForeground }]}
-              >
-                {t("Sites you sign in to stay signed in for everyone in this space")}
-              </Text>
-            ) : null}
-            <View
-              style={{ flex: 1, backgroundColor: tokens.card, overflow: "hidden" }}
-              onLayout={(event) => {
-                const { width, height } = event.nativeEvent.layout;
-                setScreenBox((box) =>
-                  box && box.width === width && box.height === height ? box : { width, height },
-                );
-              }}
-            >
-              {foreground && loadedScreenUrl ? (
-                <View
-                  style={
-                    screenRotated && screenBox
-                      ? coverFrame(
-                          screenBox,
-                          computer?.screenWidth && computer?.screenHeight
-                            ? computer.screenWidth / computer.screenHeight
-                            : 16 / 10,
-                          // While the modal is still portrait — mid-flip or refusing the
-                          // orientation lock — the frame is laid out swapped and turned
-                          // with a native transform, so touch keeps mapping correctly.
-                          screenBox.height > screenBox.width,
-                        )
-                      : { flex: 1 }
-                  }
-                >
-                  <ScreenWebView
-                    key={screenReload}
-                    url={loadedScreenUrl}
-                    interactive={hasControl}
-                    nativeKeyboard={hasControl}
-                    keyboardSession={keyboardSession}
-                    webViewRef={screenWebViewRef}
-                    onKeyboardMessage={(data) => {
-                      const gate = keyboardGate.current;
-                      if (!isComputerKeyboardReadyMessage(data, String(gate.session))) return;
-                      injectKeyboardCommands(gate.bridge.ready());
-                    }}
-                    onScreenState={onScreenState}
-                    onLoadStart={onScreenLoadStart}
-                    onRendererLost={() => void reloadScreen()}
-                    onError={() => {
-                      refreshController.invalidateScreen();
-                      setScreenOriginError(true);
-                      setScreenError(
-                        t("Could not load the desktop. This device cannot reach the screen URL."),
-                      );
-                    }}
-                  />
-                </View>
-              ) : (
-                <View
-                  style={{ flex: 1, alignItems: "center", justifyContent: "center", padding: 16 }}
-                >
-                  <Text style={{ color: tokens.mutedForeground, textAlign: "center" }}>
-                    {placeholder}
+                  <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+                    {hasControl ? (
+                      <ComputerReleaseActions
+                        takeoverRequested={computer?.takeoverRequested ?? false}
+                        onRelease={releaseComputer}
+                      />
+                    ) : (
+                      <NativeActionButton
+                        label={t("Take control")}
+                        prominence="secondary"
+                        fill={false}
+                        style={{ alignSelf: "center" }}
+                        onPress={() =>
+                          void bootComputer({ takeControl: true, showProgress: false }).catch(
+                            () => undefined,
+                          )
+                        }
+                      />
+                    )}
+                    <GlassIconButton
+                      accessibilityLabel={screenRotated ? t("Upright screen") : t("Rotate screen")}
+                      onPress={() => setScreenRotated((value) => !value)}
+                      ios={screenRotated ? "rotate.left" : "rotate.right"}
+                      android={screenRotated ? "phone-portrait-outline" : "phone-landscape-outline"}
+                      size={36}
+                      iconSize={16}
+                    />
+                    <GlassIconButton
+                      accessibilityLabel={t("Close computer")}
+                      onPress={() => setComputerOpen(false)}
+                      ios="xmark"
+                      android="close"
+                      size={36}
+                      iconSize={16}
+                    />
+                  </View>
+                </SafeAreaView>
+                {hasControl && computer?.shared ? (
+                  <Text
+                    testID="computer-shared-browser"
+                    style={[styles.sharedBrowser, { color: tokens.mutedForeground }]}
+                  >
+                    {t("Sites you sign in to stay signed in for everyone in this space")}
                   </Text>
-                  {retryScreenAction}
-                </View>
-              )}
-            </View>
-            {tabletop ? (
-              // A fixed lower half, so the keyboard lifts the bar without pushing the desktop.
-              <View style={{ height: windowSize.height - tabletop.top, paddingTop: tabletop.gap }}>
-                <KeyboardAvoidingView
-                  behavior="height"
-                  style={{ flex: 1, justifyContent: "flex-end" }}
+                ) : null}
+                <View
+                  style={{ flex: 1, backgroundColor: tokens.card, overflow: "hidden" }}
+                  onLayout={(event) => {
+                    const { width, height } = event.nativeEvent.layout;
+                    setScreenBox((box) =>
+                      box && box.width === width && box.height === height ? box : { width, height },
+                    );
+                  }}
                 >
-                  {keyboardBar}
-                </KeyboardAvoidingView>
-              </View>
-            ) : screenTurned && keyboardBar ? (
-              // The turned desktop fills the window and the keyboard floats over it, so the
-              // bar rides above the keyboard instead of pushing anything around.
-              <View
-                pointerEvents="box-none"
-                style={{
-                  position: "absolute",
-                  left: 0,
-                  right: 0,
-                  bottom: keyboardVisible && keyboardHeight > 0 ? keyboardHeight : 0,
-                }}
-              >
-                {keyboardBar}
-              </View>
-            ) : (
-              keyboardBar
+                  {foreground && loadedScreenUrl ? (
+                    <View
+                      style={
+                        screenRotated && screenBox && screenBox.height > screenBox.width
+                          ? {
+                              // A modal that is still portrait — mid-flip or refusing the
+                              // orientation lock — lays the frame out swapped and turned with
+                              // a native transform, so touch keeps mapping correctly.
+                              position: "absolute",
+                              top: (screenBox.height - screenBox.width) / 2,
+                              left: (screenBox.width - screenBox.height) / 2,
+                              width: screenBox.height,
+                              height: screenBox.width,
+                              transform: [{ rotate: "90deg" }],
+                            }
+                          : { flex: 1 }
+                      }
+                    >
+                      <ScreenWebView
+                        key={screenReload}
+                        url={loadedScreenUrl}
+                        interactive={hasControl}
+                        nativeKeyboard={hasControl}
+                        keyboardSession={keyboardSession}
+                        webViewRef={screenWebViewRef}
+                        onKeyboardMessage={(data) => {
+                          const gate = keyboardGate.current;
+                          if (!isComputerKeyboardReadyMessage(data, String(gate.session))) return;
+                          injectKeyboardCommands(gate.bridge.ready());
+                        }}
+                        onScreenState={onScreenState}
+                        onLoadStart={onScreenLoadStart}
+                        onRendererLost={() => void reloadScreen()}
+                        onError={() => {
+                          refreshController.invalidateScreen();
+                          setScreenOriginError(true);
+                          setScreenError(
+                            t(
+                              "Could not load the desktop. This device cannot reach the screen URL.",
+                            ),
+                          );
+                        }}
+                      />
+                    </View>
+                  ) : (
+                    <View
+                      style={{
+                        flex: 1,
+                        alignItems: "center",
+                        justifyContent: "center",
+                        padding: 16,
+                      }}
+                    >
+                      <Text style={{ color: tokens.mutedForeground, textAlign: "center" }}>
+                        {placeholder}
+                      </Text>
+                      {retryScreenAction}
+                    </View>
+                  )}
+                </View>
+                {tabletop ? (
+                  // A fixed lower half, so the keyboard lifts the bar without pushing the desktop.
+                  <View
+                    style={{ height: windowSize.height - tabletop.top, paddingTop: tabletop.gap }}
+                  >
+                    <KeyboardAvoidingView
+                      behavior="height"
+                      style={{ flex: 1, justifyContent: "flex-end" }}
+                    >
+                      {keyboardBar}
+                    </KeyboardAvoidingView>
+                  </View>
+                ) : screenTurned && keyboardBar ? (
+                  // The turned desktop fills the window and the keyboard floats over it, so the
+                  // bar rides above the keyboard instead of pushing anything around.
+                  <View
+                    pointerEvents="box-none"
+                    style={{
+                      position: "absolute",
+                      left: 0,
+                      right: 0,
+                      bottom: keyboardVisible && keyboardHeight > 0 ? keyboardHeight : 0,
+                    }}
+                  >
+                    {keyboardBar}
+                  </View>
+                ) : (
+                  keyboardBar
+                )}
+              </>
             )}
           </KeyboardAvoidingView>
         </SafeAreaProvider>
@@ -861,41 +992,36 @@ export default function Computer() {
   );
 }
 
-/** A screen frame that covers the box in the framebuffer's own aspect: the desktop's
- * outer edges crop off instead of the display letterboxing with dead space. `turned`
- * lays the frame out swapped and rotates it, for a modal that refused to go landscape. */
-function coverFrame(
+/** A screen frame that fits the box in the framebuffer's own aspect: every pixel of the
+ * desktop stays visible, centered in whatever width the bands leave for it. */
+function fitFrame(
   box: { width: number; height: number },
   aspect: number,
-  turned: boolean,
-): {
-  position: "absolute";
-  top: number;
-  left: number;
-  width: number;
-  height: number;
-  transform?: { rotate: string }[];
-} {
-  let width = turned ? box.height : box.width;
-  let height = turned ? box.width : box.height;
-  if (width / height < aspect) width = height * aspect;
-  else height = width / aspect;
+): { position: "absolute"; top: number; left: number; width: number; height: number } {
+  let width = box.height * aspect;
+  let height = box.height;
+  if (width > box.width) {
+    width = box.width;
+    height = width / aspect;
+  }
   return {
     position: "absolute",
     top: (box.height - height) / 2,
     left: (box.width - width) / 2,
     width,
     height,
-    ...(turned ? { transform: [{ rotate: "90deg" }] } : {}),
   };
 }
 
 function ComputerReleaseActions({
   takeoverRequested,
   onRelease,
+  vertical = false,
 }: {
   takeoverRequested: boolean;
   onRelease: (reason?: ComputerReleaseReason) => Promise<void>;
+  /** Stacked for the slim band beside a turned desktop. */
+  vertical?: boolean;
 }) {
   const { t } = useI18n();
   const actions: Array<{ label: string; reason?: ComputerReleaseReason; primary?: boolean }> =
@@ -906,7 +1032,13 @@ function ComputerReleaseActions({
         ]
       : [{ label: t("Release") }];
   return (
-    <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+    <View
+      style={
+        vertical
+          ? { flexDirection: "column", alignSelf: "stretch", gap: 8 }
+          : { flexDirection: "row", alignItems: "center", gap: 8 }
+      }
+    >
       {actions.map((action) => (
         <NativeActionButton
           key={action.label}
@@ -1017,4 +1149,6 @@ function ScreenWebView({
 
 const styles = StyleSheet.create({
   sharedBrowser: { fontSize: 12, paddingHorizontal: 14, paddingBottom: 4 },
+  turnedBand: { width: 88, alignItems: "center", gap: 10, paddingVertical: 10 },
+  turnedName: { fontSize: 11, fontWeight: "500", textAlign: "center" },
 });

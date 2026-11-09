@@ -29,10 +29,13 @@ function keySpecs(t: (message: string) => string): Array<{
 export function ComputerKeyboardBar({
   active,
   onCommand,
+  vertical = false,
 }: {
   /** False once the screen is closing; the bar can stay mounted while it animates away. */
   active: boolean;
   onCommand: (command: ComputerKeyboardCommand) => void;
+  /** A slim column that flanks the turned desktop instead of a bar under it. */
+  vertical?: boolean;
 }) {
   const { t } = useI18n();
   const tokens = useMobileTokens();
@@ -141,10 +144,12 @@ export function ComputerKeyboardBar({
     <View
       style={[
         styles.bar,
+        vertical ? styles.column : null,
         {
-          borderTopColor: tokens.border,
+          borderTopColor: vertical ? "transparent" : tokens.border,
+          borderLeftColor: tokens.border,
           backgroundColor: tokens.background,
-          paddingBottom: keyboardVisible ? 8 : Math.max(insets.bottom, 8),
+          paddingBottom: vertical ? 8 : keyboardVisible ? 8 : Math.max(insets.bottom, 8),
         },
       ]}
     >
@@ -225,6 +230,16 @@ const styles = StyleSheet.create({
     paddingHorizontal: 8,
     paddingTop: 8,
   },
+  column: {
+    flexDirection: "column",
+    alignItems: "stretch",
+    alignSelf: "stretch",
+    width: 64,
+    borderTopWidth: 0,
+    borderLeftWidth: 1,
+    paddingHorizontal: 6,
+    gap: 6,
+  },
   input: {
     position: "absolute",
     width: 1,
@@ -233,6 +248,6 @@ const styles = StyleSheet.create({
     bottom: 0,
     left: 0,
   },
-  toggle: { width: 40 },
+  toggle: { width: 40, alignSelf: "center" },
   key: { flex: 1, minWidth: 0 },
 });

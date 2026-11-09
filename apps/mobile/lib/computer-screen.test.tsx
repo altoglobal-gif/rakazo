@@ -32,6 +32,12 @@ const picker = vi.hoisted(() => ({
     | { value?: string; disabled?: boolean; onChange: (mode: string) => void }
     | undefined,
 }));
+// The full window reports its desktop area's size here, as a real layout pass would.
+const layout = vi.hoisted(() => ({
+  handler: undefined as
+    | ((event: { nativeEvent: { layout: { width: number; height: number } } }) => void)
+    | undefined,
+}));
 
 vi.mock("./side-insets", () => ({ useSideInsets: () => ({}) }));
 vi.mock("react-native", () => {
@@ -46,7 +52,9 @@ vi.mock("react-native", () => {
       paddingTop?: number;
     };
     keyboardShouldPersistTaps?: string;
+    onLayout?: (event: { nativeEvent: { layout: { width: number; height: number } } }) => void;
   }) {
+    if (props.onLayout) layout.handler = props.onLayout;
     return createElement(
       "div",
       {
@@ -394,6 +402,32 @@ describe("computer screen", () => {
     await settle();
     expect(orientation.unlocks).toBe(1);
     expect(keyboardMode.defaults).toBe(1);
+  });
+
+  it("moves the window's controls beside the desktop once the window turns landscape", async () => {
+    respond(botWorking);
+    const view = await render();
+    await act(async () => preview(view).click());
+    await settle();
+    // Portrait: the controls sit in the header row above the desktop.
+    expect(view.textContent).toContain("Take control");
+    await act(async () =>
+      view.querySelector<HTMLButtonElement>('[aria-label="Rotate screen"]')?.click(),
+    );
+    await settle();
+    // The orientation lock takes hold and the window measures itself landscape.
+    act(() => layout.handler?.({ nativeEvent: { layout: { width: 780, height: 300 } } }));
+    await settle();
+    // The band layout keeps every control reachable beside the fitted desktop.
+    expect(view.querySelector('[aria-label="Upright screen"]')).not.toBeNull();
+    expect(view.querySelector('[aria-label="Close computer"]')).not.toBeNull();
+    expect(view.textContent).toContain("Take control");
+    expect(view.querySelector("section iframe")).not.toBeNull();
+    await act(async () =>
+      view.querySelector<HTMLButtonElement>('[aria-label="Close computer"]')?.click(),
+    );
+    await settle();
+    expect(orientation.unlocks).toBe(1);
   });
 
   it("keeps an unreachable screen's error while later reads rotate its token", async () => {
