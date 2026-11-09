@@ -153,6 +153,8 @@ export function ComputerKeyboardBar({
         },
       ]}
     >
+      {/* In the column the keys pair up in two-wide rows, so they always fit the
+       * short edge of a landscape window. */}
       <TextInput
         ref={inputRef}
         onChangeText={onChangeText}
@@ -181,7 +183,7 @@ export function ComputerKeyboardBar({
         fill
         selected={open}
         onPress={toggle}
-        style={styles.toggle}
+        style={vertical ? styles.columnKey : styles.toggle}
       />
       {keys.slice(0, 2).map((key) => (
         <NativeActionButton
@@ -192,7 +194,7 @@ export function ComputerKeyboardBar({
           prominence="secondary"
           fill
           onPress={() => press(key.name)}
-          style={styles.key}
+          style={vertical ? styles.columnKey : styles.key}
         />
       ))}
       <NativeActionButton
@@ -203,7 +205,7 @@ export function ComputerKeyboardBar({
         fill
         selected={controlLatched}
         onPress={() => latch(!control.current)}
-        style={styles.key}
+        style={vertical ? styles.columnKey : styles.key}
       />
       {keys.slice(2).map((key) => (
         <NativeActionButton
@@ -214,7 +216,7 @@ export function ComputerKeyboardBar({
           prominence="secondary"
           fill
           onPress={() => press(key.name)}
-          style={styles.key}
+          style={vertical ? styles.columnKey : styles.key}
         />
       ))}
     </View>
@@ -231,14 +233,18 @@ const styles = StyleSheet.create({
     paddingTop: 8,
   },
   column: {
-    flexDirection: "column",
-    alignItems: "stretch",
+    flexDirection: "row",
+    flexWrap: "wrap",
+    alignContent: "space-evenly",
+    justifyContent: "center",
     alignSelf: "stretch",
-    width: 64,
+    width: 96,
     borderTopWidth: 0,
     borderLeftWidth: 1,
     paddingHorizontal: 6,
-    gap: 6,
+    paddingVertical: 8,
+    rowGap: 6,
+    columnGap: 6,
   },
   input: {
     position: "absolute",
@@ -250,4 +256,5 @@ const styles = StyleSheet.create({
   },
   toggle: { width: 40, alignSelf: "center" },
   key: { flex: 1, minWidth: 0 },
+  columnKey: { width: 39, height: 42, flexGrow: 0, flexShrink: 0 },
 });

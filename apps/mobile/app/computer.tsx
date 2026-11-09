@@ -1045,6 +1045,7 @@ function ComputerReleaseActions({
           label={action.label}
           prominence={action.primary ? "primary" : "secondary"}
           fill={false}
+          size={vertical ? "compact" : undefined}
           style={{ alignSelf: "center" }}
           onPress={() => void onRelease(action.reason)}
         />
@@ -1149,6 +1150,12 @@ function ScreenWebView({
 
 const styles = StyleSheet.create({
   sharedBrowser: { fontSize: 12, paddingHorizontal: 14, paddingBottom: 4 },
-  turnedBand: { width: 88, alignItems: "center", gap: 10, paddingVertical: 10 },
+  turnedBand: {
+    width: 88,
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 10,
+    paddingVertical: 10,
+  },
   turnedName: { fontSize: 11, fontWeight: "500", textAlign: "center" },
 });
