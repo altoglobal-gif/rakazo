@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+  <string name="rakazo_channel_live">สถานะเอเจนต์แบบเรียลไทม์</string>
+  <string name="rakazo_channel_messages">ข้อความของเอเจนต์</string>
+  <string name="rakazo_channel_scheduled">งานที่กำหนดเวลาไว้</string>
+  <string name="rakazo_channel_attention">ต้องดูแล</string>
+
+  <string name="rakazo_live_one">%1$s กำลังทำงาน</string>
+  <string name="rakazo_live_many">%1$s และอีก %2$d รายการกำลังทำงาน</string>
+  <string name="rakazo_live_working">กำลังทำงาน</string>
+
+  <string name="rakazo_scheduled_title">%1$s · งานที่กำหนดเวลาไว้</string>
+  <string name="rakazo_replied_group">%1$s ตอบกลับใน %2$s</string>
+  <string name="rakazo_replied">%1$s ตอบกลับ</string>
+
+  <string name="rakazo_attention_failed">%1$s พบปัญหา</string>
+  <string name="rakazo_attention_takeover">%1$s ต้องให้คุณอยู่บนหน้าจอ</string>
+  <string name="rakazo_attention_input">%1$s ต้องการข้อมูลจากคุณ</string>
+</resources>

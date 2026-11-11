@@ -12,6 +12,7 @@ const SHIPPED_LOCALES = [
   "ja",
   "es",
   "pl",
+  "th",
 ] as const satisfies readonly (typeof AppLocaleSchema.options)[number][];
 
 export type UiLocale = (typeof SHIPPED_LOCALES)[number];

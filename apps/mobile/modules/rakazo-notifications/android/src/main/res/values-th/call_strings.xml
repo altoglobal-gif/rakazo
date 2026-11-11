@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+  <string name="rakazo_call_channel">สายกำลังใช้งาน</string>
+  <string name="rakazo_call_title">สายเรียก Rakazo</string>
+  <string name="rakazo_call_text">ไมโครโฟนกำลังทำงาน</string>
+  <string name="rakazo_call_answer">รับสาย</string>
+  <string name="rakazo_call_decline">ปฏิเสธ</string>
+</resources>

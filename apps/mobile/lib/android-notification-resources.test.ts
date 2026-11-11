@@ -35,6 +35,7 @@ const resourceDirectories = {
   ja: "values-ja",
   es: "values-es",
   pl: "values-pl",
+  th: "values-th",
 } as const satisfies Record<(typeof UI_LOCALES)[number], string>;
 
 function strings(locale: (typeof UI_LOCALES)[number]) {

@@ -62,6 +62,7 @@ describe("Android call foreground service", () => {
       ja: "values-ja",
       es: "values-es",
       pl: "values-pl",
+      th: "values-th",
     } as const satisfies Record<(typeof UI_LOCALES)[number], string>;
     const keys = [
       "rakazo_call_channel",

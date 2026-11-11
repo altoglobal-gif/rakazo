@@ -15,6 +15,7 @@ const SPEECH_LOCALE_TAGS = {
   tr: "tr-TR",
   "zh-CN": "zh-CN",
   "zh-TW": "zh-TW",
+  th: "th-TH",
 } as const;
 
 /**
