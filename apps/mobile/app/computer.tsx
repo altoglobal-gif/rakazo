@@ -116,7 +116,7 @@ export default function Computer() {
   // The keyboard closes on the Release tap, not when the server answers.
   const [releasing, setReleasing] = useState(false);
   const autoBooted = useRef<string | null>(null);
-  const screenWebViewRef = useRef<WebView>(null);
+  const screenWebViewRef = useRef<WebView<object>>(null);
   const keyboardGate = useRef({
     key: "",
     session: 0,
@@ -1070,7 +1070,7 @@ function ScreenWebView({
   interactive: boolean;
   nativeKeyboard?: boolean;
   keyboardSession?: string;
-  webViewRef?: RefObject<WebView | null>;
+  webViewRef?: RefObject<WebView<object> | null>;
   onKeyboardMessage?: (data: string) => void;
   onScreenState?: (state: ScreenPageState) => void;
   onLoadStart?: () => void;
