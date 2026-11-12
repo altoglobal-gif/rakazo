@@ -59,6 +59,7 @@ describe("activateUiLocale", () => {
       nl: async () => ({ messages: { Settings: "Instellingen" } }),
       ja: async () => ({ messages: { Settings: "設定" } }),
       pl: async () => ({ messages: { Settings: "Ustawienia" } }),
+      th: async () => ({ messages: {} }),
     });
 
     const locale = await activateUiLocale("de");
@@ -115,6 +116,7 @@ describe("activateUiLocale", () => {
       pl: async () => {
         throw new Error("pl missing");
       },
+      th: async () => ({ messages: {} }),
     });
 
     const locale = await activateUiLocale("ko");
@@ -144,6 +146,7 @@ describe("activateUiLocale", () => {
       nl: async () => ({ messages: { Settings: "Instellingen" } }),
       ja: async () => ({ messages: { Settings: "設定" } }),
       pl: async () => ({ messages: { Settings: "Ustawienia" } }),
+      th: async () => ({ messages: {} }),
     });
 
     const first = activateUiLocale("de");
@@ -178,6 +181,7 @@ describe("activateUiLocale", () => {
       nl: async () => ({ messages: { Settings: "Instellingen" } }),
       ja: async () => ({ messages: { Settings: "設定" } }),
       pl: async () => ({ messages: { Settings: "Ustawienia" } }),
+      th: async () => ({ messages: {} }),
     });
 
     await activateUiLocale("en");
@@ -217,6 +221,7 @@ describe("activateUiLocale", () => {
       nl: async () => ({ messages: { Settings: "Instellingen" } }),
       ja: async () => ({ messages: { Settings: "設定" } }),
       pl: async () => ({ messages: { Settings: "Ustawienia" } }),
+      th: async () => ({ messages: {} }),
     });
 
     await activateUiLocale("en");
