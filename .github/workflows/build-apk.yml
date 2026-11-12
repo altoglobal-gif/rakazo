@@ -41,8 +41,7 @@ jobs:
             --profile android-apk \
             --local \
             --non-interactive \
-            --output ../../rakazo.apk \
-            --skip-credentials-check
+            --output ../../rakazo.apk
 
       - name: Upload the APK
         uses: actions/upload-artifact@v4
