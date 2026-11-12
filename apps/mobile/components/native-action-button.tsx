@@ -84,6 +84,9 @@ export function NativeActionButton({
           ) : null}
           {label ? (
             <Text
+              numberOfLines={1}
+              adjustsFontSizeToFit
+              minimumFontScale={0.75}
               style={{
                 color: colors.label,
                 fontSize:

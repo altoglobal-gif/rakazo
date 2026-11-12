@@ -576,7 +576,7 @@ export const TH_MESSAGES: Record<string, string> = {
   "I’m done": "เสร็จแล้ว",
   "Open computer": "เปิดคอมพิวเตอร์",
   "Open in full window": "เปิดแบบเต็มหน้าต่าง",
-  Release: "ปล่อยการควบคุม",
+  Release: "ปล่อย",
   Skip: "ข้าม",
   "Take control": "ควบคุมเอง",
   "Clean up": "เก็บกวาด",
