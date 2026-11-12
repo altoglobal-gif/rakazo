@@ -1,0 +1,52 @@
+name: Build Android APK
+
+# Builds the rakazo Android APK on a GitHub runner with `eas build --local`,
+# so no EAS build quota is spent. The signing keystore stays in EAS
+# credentials and is fetched at build time with EXPO_TOKEN, which keeps the
+# signature identical to earlier cloud builds (installs over them).
+on:
+  workflow_dispatch:
+  push:
+    branches: [app/android]
+
+jobs:
+  apk:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    env:
+      EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+
+      - name: Install pnpm
+        run: npm install -g pnpm@12.18.0
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build the APK locally
+        working-directory: apps/mobile
+        run: |
+          npx eas-cli@latest build \
+            --platform android \
+            --profile android-apk \
+            --local \
+            --non-interactive \
+            --output ../../rakazo.apk \
+            --skip-credentials-check
+
+      - name: Upload the APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: rakazo-apk
+          path: rakazo.apk
+          retention-days: 30
