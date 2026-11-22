@@ -13,7 +13,6 @@ import {
   computerKeyboardChanges,
 } from "../../lib/computers/computer-keyboard";
 import { useMobileTokens, useResolvedAppearance } from "../../lib/native/native";
-import type { NativeActionButtonProps } from "../../lib/native/native-controls";
 import { NativeActionButton } from "../native/native-action-button";
 
 // Some Android keyboards report a Backspace key press just after the change that deleted with it.
@@ -22,13 +21,10 @@ const DELETE_KEY_PRESS_MS = 50;
 export function ComputerKeyboardBar({
   active,
   onCommand,
-  vertical = false,
 }: {
   /** False once the screen is closing; the bar can stay mounted while it animates away. */
   active: boolean;
   onCommand: (command: ComputerKeyboardCommand) => void;
-  /** A slim column that flanks the turned desktop instead of a bar under it. */
-  vertical?: boolean;
 }) {
   const { t } = useLingui();
   const tokens = useMobileTokens();
@@ -139,55 +135,15 @@ export function ComputerKeyboardBar({
     { name: "ArrowUp", label: "↑", accessibilityLabel: t`Up` },
     { name: "ArrowRight", label: "→", accessibilityLabel: t`Right` },
   ];
-  // Vertical pairs the keys two per row across four rows, each sharing the height, so
-  // the column always fits the short edge of a landscape window.
-  const keyActions: Array<{ name: string; action: NativeActionButtonProps }> = [
-    {
-      name: "toggle",
-      action: {
-        accessibilityLabel: open ? t`Hide keyboard` : t`Show keyboard`,
-        icon: { ios: "keyboard", android: "keypad-outline" },
-        selected: open,
-        onPress: toggle,
-      },
-    },
-    ...keys.slice(0, 2).map((key) => ({
-      name: key.name,
-      action: {
-        label: key.label,
-        accessibilityLabel: key.accessibilityLabel,
-        onPress: () => press(key.name),
-      },
-    })),
-    {
-      name: "Ctrl",
-      action: {
-        label: "Ctrl",
-        accessibilityLabel: t`Control`,
-        selected: controlLatched,
-        onPress: () => latch(!control.current),
-      },
-    },
-    ...keys.slice(2).map((key) => ({
-      name: key.name,
-      action: {
-        label: key.label,
-        accessibilityLabel: key.accessibilityLabel,
-        onPress: () => press(key.name),
-      },
-    })),
-  ];
 
   return (
     <View
       style={[
         styles.bar,
-        vertical ? styles.column : null,
         {
-          borderTopColor: vertical ? "transparent" : tokens.border,
-          borderLeftColor: tokens.border,
+          borderTopColor: tokens.border,
           backgroundColor: tokens.background,
-          paddingBottom: vertical ? 8 : keyboardVisible ? 8 : Math.max(insets.bottom, 8),
+          paddingBottom: keyboardVisible ? 8 : Math.max(insets.bottom, 8),
         },
       ]}
     >
@@ -212,30 +168,49 @@ export function ComputerKeyboardBar({
         accessibilityLabel={t`Computer keyboard`}
         style={styles.input}
       />
-      {(vertical
-        ? [
-            [0, 1],
-            [2, 3],
-            [4, 5],
-            [6, 7],
-          ]
-        : [[0, 1, 2, 3, 4, 5, 6, 7]]
-      ).map((row) => (
-        <View key={row.join("-")} style={vertical ? styles.columnRow : styles.row}>
-          {row.map((index) => {
-            const key = keyActions[index]!;
-            return (
-              <NativeActionButton
-                key={key.name}
-                {...key.action}
-                size="compact"
-                prominence="secondary"
-                fill
-                style={vertical ? styles.columnKey : index === 0 ? styles.toggle : styles.key}
-              />
-            );
-          })}
-        </View>
+      <NativeActionButton
+        accessibilityLabel={open ? t`Hide keyboard` : t`Show keyboard`}
+        icon={{ ios: "keyboard", android: "keypad-outline" }}
+        size="compact"
+        prominence="secondary"
+        fill
+        selected={open}
+        onPress={toggle}
+        style={styles.toggle}
+      />
+      {keys.slice(0, 2).map((key) => (
+        <NativeActionButton
+          key={key.name}
+          label={key.label}
+          accessibilityLabel={key.accessibilityLabel}
+          size="compact"
+          prominence="secondary"
+          fill
+          onPress={() => press(key.name)}
+          style={styles.key}
+        />
+      ))}
+      <NativeActionButton
+        label="Ctrl"
+        accessibilityLabel={t`Control`}
+        size="compact"
+        prominence="secondary"
+        fill
+        selected={controlLatched}
+        onPress={() => latch(!control.current)}
+        style={styles.key}
+      />
+      {keys.slice(2).map((key) => (
+        <NativeActionButton
+          key={key.name}
+          label={key.label}
+          accessibilityLabel={key.accessibilityLabel}
+          size="compact"
+          prominence="secondary"
+          fill
+          onPress={() => press(key.name)}
+          style={styles.key}
+        />
       ))}
     </View>
   );
@@ -250,18 +225,6 @@ const styles = StyleSheet.create({
     paddingHorizontal: 8,
     paddingTop: 8,
   },
-  column: {
-    flexDirection: "column",
-    alignSelf: "stretch",
-    width: 96,
-    borderTopWidth: 0,
-    borderLeftWidth: 1,
-    paddingHorizontal: 6,
-    paddingVertical: 8,
-    rowGap: 6,
-  },
-  columnRow: { flex: 1, flexDirection: "row", columnGap: 6 },
-  row: { flexDirection: "row", gap: 4 },
   input: {
     position: "absolute",
     width: 1,
@@ -270,7 +233,6 @@ const styles = StyleSheet.create({
     bottom: 0,
     left: 0,
   },
-  toggle: { width: 40, alignSelf: "center" },
-  columnKey: { flex: 1, height: "100%", minHeight: 0 },
+  toggle: { width: 40 },
   key: { flex: 1, minWidth: 0 },
 });
