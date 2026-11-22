@@ -31,12 +31,7 @@ import {
   useWindowDimensions,
   View,
 } from "react-native";
-import {
-  AndroidSoftInputModes,
-  KeyboardAvoidingView,
-  KeyboardController,
-  useKeyboardState,
-} from "react-native-keyboard-controller";
+import { KeyboardAvoidingView } from "react-native-keyboard-controller";
 import {
   initialWindowMetrics,
   SafeAreaProvider,
@@ -115,8 +110,6 @@ export default function Computer() {
   // The full window's desktop, turned to fill the display and watched from its short edge.
   const [screenRotated, setScreenRotated] = useState(false);
   const [screenBox, setScreenBox] = useState<{ width: number; height: number } | null>(null);
-  const keyboardVisible = useKeyboardState((state) => state.isVisible);
-  const keyboardHeight = useKeyboardState((state) => state.height);
   // The keyboard closes on the Hand back tap, not when the server answers.
   const [releasing, setReleasing] = useState(false);
   const autoBooted = useRef<string | null>(null);
@@ -159,8 +152,6 @@ export default function Computer() {
     !tabletop &&
     screenBox != null &&
     screenBox.width > screenBox.height;
-  // Portrait fallback while the modal refuses to turn.
-  const screenTurned = computerOpen && screenRotated && !tabletop;
   const screenVisible =
     computerOpen && computer?.state === "running" && Boolean(embeddedScreenUrl) && !screenError;
   const loadedScreenUrl = nextLoadedScreenUrl(
@@ -456,15 +447,11 @@ export default function Computer() {
 
   // The rotated desktop is watched sideways, so the device itself turns with it: a real
   // landscape orientation keeps the soft keyboard, the insets and the resize in the
-  // rotated frame. The keyboard floats over the turned desktop instead of resizing it.
+  // rotated frame instead of fighting them from portrait.
   useEffect(() => {
     if (!computerOpen || !screenRotated || tabletop) return;
     void lockAsync(OrientationLock.LANDSCAPE).catch(() => undefined);
-    if (Platform.OS === "android") {
-      KeyboardController.setInputMode(AndroidSoftInputModes.SOFT_INPUT_ADJUST_NOTHING);
-    }
     return () => {
-      if (Platform.OS === "android") KeyboardController.setDefaultMode();
       void unlockAsync().catch(() => undefined);
     };
   }, [computerOpen, screenRotated, tabletop]);
@@ -924,19 +911,6 @@ export default function Computer() {
                     >
                       {keyboardBar}
                     </KeyboardAvoidingView>
-                  </View>
-                ) : screenTurned && keyboardBar ? (
-                  // A modal that never went landscape: the keyboard floats over the rotated frame.
-                  <View
-                    pointerEvents="box-none"
-                    style={{
-                      position: "absolute",
-                      left: 0,
-                      right: 0,
-                      bottom: keyboardVisible && keyboardHeight > 0 ? keyboardHeight : 0,
-                    }}
-                  >
-                    {keyboardBar}
                   </View>
                 ) : (
                   keyboardBar
