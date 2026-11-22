@@ -1099,6 +1099,9 @@ function ScreenWebView({
       originWhitelist={["*"]}
       mixedContentMode="always"
       setSupportMultipleWindows={false}
+      // The screen page and its scripts update with the computer image; a cached
+      // copy would keep a stale trackpad UI alive across container updates.
+      cacheEnabled={false}
       scrollEnabled={false}
       overScrollMode="never"
       onError={onError}
