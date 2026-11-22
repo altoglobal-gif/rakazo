@@ -1,12 +1,12 @@
 import type { MenuAction } from "@expo/ui/community/menu";
 import { MenuView } from "@expo/ui/community/menu";
+import { useLingui } from "@lingui/react/macro";
 import type { ReactNode, Ref } from "react";
 import { forwardRef, useImperativeHandle, useState } from "react";
 import type { StyleProp, ViewStyle } from "react-native";
 import { Modal, Platform, Pressable, StyleSheet, Text, View } from "react-native";
-import { mobileTokens } from "../lib/appearance";
-import { useI18n } from "../lib/i18n";
-import { useThemedStyles } from "../lib/native";
+import { mobileTokens } from "../../lib/appearance/appearance";
+import { useThemedStyles } from "../../lib/native/native";
 
 /** A menu item with an optional explanation line under its title, like the web dropdowns. */
 export type NativeMenuItem = MenuAction & { description?: string };
@@ -138,7 +138,7 @@ const AndroidMenuSheet = forwardRef<
   { title, actions, onPressAction, shouldOpenOnLongPress, accessibilityLabel, style, children },
   ref,
 ) {
-  const { t } = useI18n();
+  const { t } = useLingui();
   const styles = useThemedStyles(createStyles);
   const [open, setOpen] = useState(false);
   useImperativeHandle(ref, () => ({ show: () => setOpen(true) }), []);
@@ -198,7 +198,7 @@ const AndroidMenuSheet = forwardRef<
             style={styles.cancel}
             onPress={() => setOpen(false)}
           >
-            <Text style={styles.cancelText}>{t("Cancel")}</Text>
+            <Text style={styles.cancelText}>{t`Cancel`}</Text>
           </Pressable>
         </View>
       </Modal>

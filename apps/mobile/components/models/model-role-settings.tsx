@@ -1,5 +1,4 @@
 import type { MenuAction, MenuComponentRef } from "@expo/ui/community/menu";
-import { MenuView } from "@expo/ui/community/menu";
 import { ph } from "@lingui/core/macro";
 import { useLingui } from "@lingui/react/macro";
 import type {
@@ -46,6 +45,8 @@ import {
   useResolvedAppearance,
   useThemedStyles,
 } from "../../lib/native/native";
+import type { NativeMenuHandle } from "../native/native-menu";
+import { NativeMenu } from "../native/native-menu";
 import { NativeSymbol } from "../native/native-symbol";
 import { SettingsGroup, SettingsRow } from "../settings/settings-group";
 
@@ -504,49 +505,51 @@ function RowMenuButton({
   onAction: (id: string) => void;
   disabled?: boolean;
 }) {
-  const menu = useRef<MenuComponentRef>(null);
+  const menu = useRef<NativeMenuHandle>(null);
   const { t } = useLingui();
   const tokens = useMobileTokens();
-  const colorScheme = useResolvedAppearance();
-  const button = (
-    <View
-      accessible
-      accessibilityRole="button"
-      accessibilityLabel={t`${ph({ name: withConnectionName(title, connection) })} options`}
-      accessibilityState={{ disabled }}
-      accessibilityActions={
-        Platform.OS === "android" && !disabled ? [{ name: "activate" }] : undefined
-      }
-      onAccessibilityAction={
-        Platform.OS === "android"
-          ? ({ nativeEvent }) => {
-              if (!disabled && nativeEvent.actionName === "activate") menu.current?.show();
-            }
-          : undefined
-      }
-      style={rowMenuStyles.buttonInner}
-    >
-      <NativeSymbol
-        ios="ellipsis"
-        android="ellipsis-horizontal"
-        color={tokens.mutedForeground}
-        size={20}
-      />
-    </View>
-  );
-  return disabled ? (
-    <View style={rowMenuStyles.button}>{button}</View>
-  ) : (
-    <MenuView
+  const label = t`${ph({ name: withConnectionName(title, connection) })} options`;
+  return (
+    <NativeMenu
       ref={menu}
-      colorScheme={colorScheme}
       title={title}
-      actions={actions}
-      onPressAction={({ nativeEvent }) => onAction(nativeEvent.event)}
+      accessibilityLabel={label}
+      actions={
+        disabled
+          ? actions.map((action) => ({
+              ...action,
+              attributes: { ...action.attributes, disabled: true },
+            }))
+          : actions
+      }
+      onPressAction={onAction}
       style={rowMenuStyles.button}
     >
-      {button}
-    </MenuView>
+      <View
+        accessible
+        accessibilityRole="button"
+        accessibilityLabel={label}
+        accessibilityState={{ disabled }}
+        accessibilityActions={
+          Platform.OS === "android" && !disabled ? [{ name: "activate" }] : undefined
+        }
+        onAccessibilityAction={
+          Platform.OS === "android"
+            ? ({ nativeEvent }) => {
+                if (!disabled && nativeEvent.actionName === "activate") menu.current?.show();
+              }
+            : undefined
+        }
+        style={rowMenuStyles.buttonInner}
+      >
+        <NativeSymbol
+          ios="ellipsis"
+          android="ellipsis-horizontal"
+          color={tokens.mutedForeground}
+          size={20}
+        />
+      </View>
+    </NativeMenu>
   );
 }
 
@@ -562,7 +565,6 @@ export function RowMenu({
   onAction: (id: string) => void;
   children: ReactNode;
 }) {
-  const colorScheme = useResolvedAppearance();
   // Native menu hosts size to their contents, so measure outside the host.
   const [width, setWidth] = useState<number>();
   return (
@@ -570,16 +572,15 @@ export function RowMenu({
       onLayout={(event) => setWidth(event.nativeEvent.layout.width)}
       style={rowMenuStyles.fullWidth}
     >
-      <MenuView
+      <NativeMenu
         shouldOpenOnLongPress
-        colorScheme={colorScheme}
         title={title}
         actions={actions}
-        onPressAction={({ nativeEvent }) => onAction(nativeEvent.event)}
+        onPressAction={onAction}
         style={rowMenuStyles.fullWidth}
       >
         <View style={{ width }}>{children}</View>
-      </MenuView>
+      </NativeMenu>
     </View>
   );
 }

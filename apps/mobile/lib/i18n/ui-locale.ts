@@ -12,15 +12,12 @@ const SHIPPED_LOCALES = [
   "ja",
   "es",
   "pl",
-<<<<<<< HEAD:apps/mobile/lib/ui-locale.ts
-=======
   "fr",
   "he",
   "hi",
   "ko",
   "pt-BR",
   "tr",
->>>>>>> upstream/main:apps/mobile/lib/i18n/ui-locale.ts
   "th",
 ] as const satisfies readonly (typeof AppLocaleSchema.options)[number][];
 

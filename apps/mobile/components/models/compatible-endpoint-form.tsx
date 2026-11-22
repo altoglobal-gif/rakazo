@@ -20,6 +20,8 @@ type CompatibleEndpointFormProps = {
   probing: boolean;
   baseUrl: string;
   onChangeBaseUrl: (next: string) => void;
+  label: string;
+  onChangeLabel: (next: string) => void;
   hasPreset: boolean;
   keyField: ReactNode;
   showModelPicker: boolean;
@@ -49,6 +51,8 @@ export function CompatibleEndpointForm({
   probing,
   baseUrl,
   onChangeBaseUrl,
+  label,
+  onChangeLabel,
   hasPreset,
   keyField,
   showModelPicker,
@@ -95,6 +99,18 @@ export function CompatibleEndpointForm({
             placeholderTextColor={native.tertiaryLabel}
             style={styles.keyInput}
             value={baseUrl}
+          />
+          <Text style={styles.sectionTitle}>{t`Display name`}</Text>
+          <TextInput
+            accessibilityLabel={t`Display name`}
+            autoCapitalize="none"
+            autoCorrect={false}
+            editable={!busy}
+            onChangeText={onChangeLabel}
+            placeholder={t`Optional`}
+            placeholderTextColor={native.tertiaryLabel}
+            style={styles.keyInput}
+            value={label}
           />
         </>
       )}

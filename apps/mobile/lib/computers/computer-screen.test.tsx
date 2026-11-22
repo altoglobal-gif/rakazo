@@ -112,9 +112,29 @@ vi.mock("react-native", () => {
 vi.mock("../platform/app-foreground", () => ({
   useAppForeground: () => foreground.value,
 }));
+const keyboardMode = vi.hoisted(() => ({ input: [] as number[], defaults: 0 }));
 vi.mock("react-native-keyboard-controller", () => ({
   KeyboardAvoidingView: ({ children, enabled }: { children: ReactNode; enabled?: boolean }) =>
     createElement("div", { "data-avoids-keyboard": String(enabled ?? true) }, children),
+  AndroidSoftInputModes: { SOFT_INPUT_ADJUST_NOTHING: 48 },
+  KeyboardController: {
+    setInputMode: (mode: number) => keyboardMode.input.push(mode),
+    setDefaultMode: () => {
+      keyboardMode.defaults += 1;
+    },
+  },
+  useKeyboardState: (select: (state: { isVisible: boolean; height: number }) => unknown) =>
+    select({ isVisible: false, height: 0 }),
+}));
+const orientation = vi.hoisted(() => ({ locks: [] as string[], unlocks: 0 }));
+vi.mock("expo-screen-orientation", () => ({
+  OrientationLock: { LANDSCAPE: "landscape" },
+  lockAsync: async (lock: string) => {
+    orientation.locks.push(lock);
+  },
+  unlockAsync: async () => {
+    orientation.unlocks += 1;
+  },
 }));
 vi.mock("../../components/computers/computer-keyboard-bar", () => ({
   ComputerKeyboardBar: (props: { active: boolean }) =>

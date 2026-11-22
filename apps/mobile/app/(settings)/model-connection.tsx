@@ -95,6 +95,7 @@ export default function ModelConnection() {
   const [modelId, setModelId] = useState("");
   const [enabledModelIds, setEnabledModelIds] = useState<string[]>([]);
   const [apiKey, setApiKey] = useState("");
+  const [endpointLabel, setEndpointLabel] = useState("");
   const [accountId, setAccountId] = useState("");
   const [gatewayId, setGatewayId] = useState("");
   const [projectId, setProjectId] = useState("");
@@ -202,6 +203,7 @@ export default function ModelConnection() {
       setHeaderRows(null);
       setEnabledModelIds(fields.enabledModelIds);
       setBaseUrl(fields.baseUrl);
+      setEndpointLabel(fields.label);
       setApiProtocol(fields.apiProtocol);
       setThinkingLevel(fields.thinkingLevel);
       setAccountId(fields.accountId);
@@ -401,6 +403,7 @@ export default function ModelConnection() {
         modelId,
         enabledModelIds,
         baseUrl,
+        label: endpointLabel,
         apiProtocol,
         headerRows,
         thinkingLevel,
@@ -543,6 +546,11 @@ export default function ModelConnection() {
       probing={probing}
       baseUrl={baseUrl}
       onChangeBaseUrl={updateBaseUrl}
+      label={endpointLabel}
+      onChangeLabel={(next) => {
+        setEndpointLabel(next);
+        clearFeedback();
+      }}
       hasPreset={Boolean(endpointPreset)}
       apiProtocol={apiProtocol}
       onChangeProtocol={updateApiProtocol}
