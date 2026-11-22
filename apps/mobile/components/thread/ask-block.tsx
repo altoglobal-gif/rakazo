@@ -1,27 +1,30 @@
+import { ph } from "@lingui/core/macro";
+import { useLingui } from "@lingui/react/macro";
 import type { LoginFieldInput } from "@rakazo/contracts";
 import { normalizeOneTimeCode, vaultKind } from "@rakazo/contracts";
-import { isSecretAskBlock } from "@rakazo/core";
+import { isQuestionAskBlock, isSecretAskBlock, siteHost } from "@rakazo/core";
+import { secretAnswerErrorText } from "@rakazo/i18n/vault";
 import { fontWeight, typeScale } from "@rakazo/ui-tokens";
 import { useRef, useState } from "react";
 import { StyleSheet, Text, TextInput, View } from "react-native";
-import { plainAskTitle } from "../../lib/ask-title";
-import { useI18n } from "../../lib/i18n";
-import type { MobileMessage } from "../../lib/mobile-types";
-import { useMobileTokens } from "../../lib/native";
-import { secretDestinationLabel, siteHost } from "../../lib/secret-destination";
-import { secretFieldTraits } from "../../lib/secret-field-traits";
-import { errorText } from "../../lib/user-error";
-import { vaultKindSymbol } from "../../lib/vault";
-import { NativeActionButton } from "../native-action-button";
-import { NativeSymbol } from "../native-symbol";
-import { SecretAskSheet } from "../secret-ask-sheet";
-import { VaultItemEditor } from "../vault-item-editor";
-import { VaultTile } from "../vault-tile";
+import type { MobileMessage } from "../../lib/api/mobile-types";
+import { errorText } from "../../lib/api/user-error";
+import { plainAskTitle } from "../../lib/cards/ask-title";
+import { useMobileTokens } from "../../lib/native/native";
+import { secretDestinationLabel } from "../../lib/vault/secret-destination";
+import { secretFieldTraits } from "../../lib/vault/secret-field-traits";
+import { vaultKindSymbol } from "../../lib/vault/vault";
+import { SecretAskSheet } from "../cards/secret-ask-sheet";
+import { NativeActionButton } from "../native/native-action-button";
+import { NativeSymbol } from "../native/native-symbol";
+import { VaultItemEditor } from "../vault/vault-item-editor";
+import { VaultTile } from "../vault/vault-tile";
 import type { MessageActionProps } from "./message-bubble";
 
 export function AskBlock({
   ask,
   canAnswer,
+  answerIsSeparate,
   canDismiss,
   onAnswer,
   onDismiss,
@@ -29,6 +32,7 @@ export function AskBlock({
 }: {
   ask: Extract<MobileMessage["blocks"][number], { kind: "ask" }>;
   canAnswer: boolean;
+  answerIsSeparate?: boolean;
   canDismiss: boolean;
   onAnswer: (
     answer: string,
@@ -40,7 +44,7 @@ export function AskBlock({
   actionProps: MessageActionProps;
 }) {
   const tokens = useMobileTokens();
-  const { t } = useI18n();
+  const { t } = useLingui();
   const [answer, setAnswer] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
@@ -51,6 +55,7 @@ export function AskBlock({
   const [sentOnce, setSentOnce] = useState(false);
   const [dismissed, setDismissed] = useState(false);
   const answered = saved || dismissed || ask.status === "answered";
+  const answeredQuestion = answered && isQuestionAskBlock(ask);
   const secretInput = isSecretAskBlock(ask);
   const loginInput = secretInput && ask.credential?.auth.type === "login";
   const itemType = secretInput ? ask.credential?.auth.type : undefined;
@@ -62,19 +67,15 @@ export function AskBlock({
   const destination = ask.credential
     ? secretDestinationLabel(ask.credential)
     : ask.oneTimeCode &&
-      t("Only enter a code {host} sent you.", { host: siteHost(ask.oneTimeCode.origin) });
+      t`Only enter a code ${ph({ host: siteHost(ask.oneTimeCode.origin) })} sent you.`;
   const incomplete = ask.oneTimeCode
     ? !normalizeOneTimeCode(answer)
     : secretInput
       ? answer.length === 0
       : !answer.trim();
   const secretLabel =
-    ask.purpose === "password"
-      ? t("Password")
-      : ask.purpose === "api_key"
-        ? t("API key")
-        : t("Code");
-  const submitLabel = ask.oneTimeCode ? t("Continue") : secretInput ? t("Save") : t("Send answer");
+    ask.purpose === "password" ? t`Password` : ask.purpose === "api_key" ? t`API key` : t`Code`;
+  const submitLabel = ask.oneTimeCode ? t`Continue` : secretInput ? t`Save` : t`Send answer`;
 
   async function dismiss() {
     if (submitting) return;
@@ -85,7 +86,7 @@ export function AskBlock({
       await onDismiss();
       setDismissed(true);
     } catch {
-      setError(t("Could not send answer"));
+      setError(t`Could not send answer`);
     } finally {
       setSubmitting(false);
     }
@@ -103,20 +104,21 @@ export function AskBlock({
       if (secretInput) setSaved(true);
     } catch (cause) {
       setError(
-        secretInput ? t("Could not send answer") : errorText(cause, t("Could not send answer")),
+        secretInput
+          ? secretAnswerErrorText(cause, t`Could not send answer`)
+          : errorText(cause, t`Could not send answer`),
       );
     } finally {
       setSubmitting(false);
     }
   }
 
-  const answeredLabel = t(
+  const answeredLabel =
     dismissed || ask.dismissed
-      ? "Dismissed"
+      ? t`Dismissed`
       : sentOnce || ask.remembered === false || ask.oneTimeCode
-        ? "Sent"
-        : "Saved",
-  );
+        ? t`Sent`
+        : t`Saved`;
 
   if (sheetInput && itemType && ask.credential) {
     const symbol = vaultKindSymbol(vaultKind(itemType));
@@ -128,6 +130,13 @@ export function AskBlock({
     const closeSheet = () => {
       if (session === sheetSession.current) setSheetOpen(false);
     };
+    // Turned down from inside the sheet, which shows its own failure.
+    const dismissFromSheet = canDismiss
+      ? async () => {
+          await onDismiss();
+          setDismissed(true);
+        }
+      : undefined;
     return (
       <View style={[askRowStyles.card, { backgroundColor: tokens.card }]}>
         <View style={askRowStyles.row}>
@@ -176,30 +185,20 @@ export function AskBlock({
             </View>
           ) : canAnswer && !ownerOnly ? (
             <NativeActionButton
-              label={t("Add")}
+              label={t`Continue`}
               disabled={submitting}
               fill={false}
               prominence="secondary"
               size="compact"
+              // The button pins itself to the top of a row; this one centers like the status text.
+              style={askRowStyles.action}
               onPress={openSheet}
             />
           ) : null}
         </View>
-        {!answered && canAnswer && !ownerOnly && canDismiss ? (
-          <View style={askInputStyles.buttons}>
-            <NativeActionButton
-              label={t("Dismiss")}
-              disabled={submitting}
-              fill={false}
-              prominence="plain"
-              size="compact"
-              onPress={() => void dismiss()}
-            />
-          </View>
-        ) : null}
         {!answered && !canAnswer ? (
           <Text style={{ color: tokens.mutedForeground, ...typeScale.caption }}>
-            {t("Waiting for this bot’s response.")}
+            {t`Waiting for this bot’s response.`}
           </Text>
         ) : null}
         {error ? (
@@ -215,6 +214,7 @@ export function AskBlock({
             pending={canAnswer && !answered && !ownerOnly}
             onClose={closeSheet}
             loginFields={ask.loginFields}
+            onDismiss={dismissFromSheet}
             onSave={async (fields, remember) => {
               if (remember) await onAnswer("", fields);
               else await onAnswer("", fields, false);
@@ -230,6 +230,7 @@ export function AskBlock({
             ask
             title={title}
             onClose={closeSheet}
+            onDismiss={dismissFromSheet}
             onSave={async ({ value }) => {
               if (value === undefined) throw new Error("No value");
               await onAnswer(value);
@@ -255,7 +256,10 @@ export function AskBlock({
       <Text
         {...actionProps}
         numberOfLines={secretInput ? 2 : undefined}
-        style={{ color: tokens.foreground, ...typeScale.cardTitle }}
+        style={{
+          color: answeredQuestion ? tokens.mutedForeground : tokens.foreground,
+          ...typeScale.cardTitle,
+        }}
       >
         {plainAskTitle(ask.text)}
       </Text>
@@ -264,38 +268,39 @@ export function AskBlock({
       ) : null}
       {secretInput && ask.sharedBrowser && !ownerOnly && !answered ? (
         <Text style={{ color: tokens.mutedForeground, ...typeScale.secondary }}>
-          {t("The bot's browser stays signed in for everyone in this space")}
+          {t`The bot's browser stays signed in for everyone in this space`}
         </Text>
       ) : null}
       {secretInput && ask.replaces && !ownerOnly && !answered ? (
         <Text style={{ color: tokens.mutedForeground, ...typeScale.secondary }}>
-          {t("Replaces the login saved for {site}", { site: ask.replaces.origin })}
+          {t`Replaces the login saved for ${ph({ site: ask.replaces.origin })}`}
         </Text>
       ) : null}
       {ask.detail && (!secretInput || ask.oneTimeCode) ? (
         <Text style={{ color: tokens.mutedForeground, ...typeScale.secondary }}>{ask.detail}</Text>
       ) : null}
-      {answered ? (
+      {answerIsSeparate ? null : answered ? (
         <Text
           style={{
             // Dismissed reads like a declined approval, not a success.
-            color: dismissed || ask.dismissed ? tokens.mutedForeground : tokens.success,
+            color:
+              answeredQuestion || dismissed || ask.dismissed
+                ? tokens.mutedForeground
+                : tokens.success,
             ...typeScale.secondary,
             fontWeight: fontWeight.medium,
             ...(secretInput ? { marginTop: 12 } : null),
           }}
         >
-          {secretInput
-            ? answeredLabel
-            : t("Answered: {answer}", { answer: ask.answer ?? t("Done") })}
+          {secretInput ? answeredLabel : t`Answered: ${ph({ answer: ask.answer ?? t`Done` })}`}
         </Text>
-      ) : canAnswer && ownerOnly ? null : canAnswer ? (
+      ) : !secretInput ? null : canAnswer && ownerOnly ? null : canAnswer ? (
         <>
           <TextInput
-            accessibilityLabel={secretInput ? secretLabel : t("Type your answer")}
+            accessibilityLabel={secretInput ? secretLabel : t`Type your answer`}
             value={answer}
             onChangeText={setAnswer}
-            placeholder={secretInput ? secretLabel : t("Type your answer")}
+            placeholder={secretInput ? secretLabel : t`Type your answer`}
             placeholderTextColor={tokens.faintForeground}
             secureTextEntry={secretInput}
             autoComplete="off"
@@ -321,7 +326,7 @@ export function AskBlock({
             />
             {secretInput && canDismiss ? (
               <NativeActionButton
-                label={t("Dismiss")}
+                label={t`Dismiss`}
                 disabled={submitting}
                 fill={secretInput}
                 style={secretInput ? askInputStyles.button : undefined}
@@ -333,7 +338,7 @@ export function AskBlock({
         </>
       ) : (
         <Text style={{ color: tokens.mutedForeground, ...typeScale.caption }}>
-          {t("Waiting for this bot’s response.")}
+          {t`Waiting for this bot’s response.`}
         </Text>
       )}
       {error ? (
@@ -349,6 +354,7 @@ const askRowStyles = StyleSheet.create({
   tile: { width: 34, height: 34, borderRadius: 9, alignItems: "center", justifyContent: "center" },
   text: { flex: 1, gap: 2 },
   done: { flexDirection: "row", alignItems: "center", gap: 4 },
+  action: { alignSelf: "center" },
 });
 
 const askInputStyles = StyleSheet.create({
