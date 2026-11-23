@@ -4,7 +4,7 @@
     "slug": "rakazo",
     "owner": "baslabs-team",
     "scheme": "rakazo",
-    "version": "1.0.19",
+    "version": "1.0.20",
     "orientation": "default",
     "userInterfaceStyle": "automatic",
     "icon": "./assets/icon.png",
@@ -154,7 +154,7 @@
     "android": {
       "blockedPermissions": ["android.permission.READ_MEDIA_VISUAL_USER_SELECTED"],
       "package": "com.rakazo.app",
-      "versionCode": 10,
+      "versionCode": 11,
       "softwareKeyboardLayoutMode": "resize",
       "icon": "./assets/icon.png",
       "adaptiveIcon": {

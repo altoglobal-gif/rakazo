@@ -48,6 +48,7 @@ import {
 } from "react-native-safe-area-context";
 import { WebView } from "react-native-webview";
 import { ComputerKeyboardBar } from "../components/computers/computer-keyboard-bar";
+import { ComputerActionsMenu } from "../components/computers/computer-actions-menu";
 import { ComputerModePicker } from "../components/computers/computer-mode-picker";
 import { GlassIconButton } from "../components/native/glass-icon-button";
 import { NativeActionButton } from "../components/native/native-action-button";
@@ -757,6 +758,15 @@ export default function Computer() {
         disabled={switching || bootPending}
         onChange={(mode) => void setComputerMode(mode)}
       />
+      {botId ? (
+        <ComputerActionsMenu
+          botId={botId}
+          computer={computer}
+          onChanged={async () => {
+            await refresh().catch(() => undefined);
+          }}
+        />
+      ) : null}
 
       <Modal
         visible={computerOpen}
