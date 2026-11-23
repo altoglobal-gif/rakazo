@@ -139,7 +139,7 @@ export function persistentComputerInstruction(options: {
 export function desktopGuardShellInstruction(offeredToolNames: ReadonlySet<string>) {
   if (!offeredToolNames.has("shell")) return undefined;
   const write = offeredToolNames.has("write_file") ? "a script with write_file" : "a script file";
-  return `Shell commands must be literal: no \`$(...)\`, backticks, subshells, or loop or computed variables. For more, write ${write} and run it with \`python3\` or \`bash\`.`;
+  return `Shell commands must be literal: no \`$(...)\`, backticks, subshells, loops, or \`$\` variables, environment variables included. Otherwise write ${write} and run it with \`python3\` or \`bash\`.`;
 }
 
 export function dockerComputerToolInstruction(
@@ -343,7 +343,9 @@ function toolUsageLine(parts: {
     builtinOffered(disabled, "connect_app")
       ? "Use connect_app when an app needs connecting or the user asks to connect one, then wait for them."
       : undefined,
-    builtinOffered(disabled, "remember") ? "Use remember for durable facts." : undefined,
+    builtinOffered(disabled, "remember")
+      ? "Use remember for durable facts, even ones the user mentions in passing without asking."
+      : undefined,
     scratchpadClause(disabled),
     parts.followUpsOffered ? FOLLOW_UP_INSTRUCTION : undefined,
     builtinOffered(disabled, "request_takeover")
@@ -420,6 +422,8 @@ export function userTurnInstructions(parts: {
   redactedTicketContext?: string | undefined;
   hasHistoricalContext: boolean;
   historyRetrievalEnabled?: boolean;
+  /** search_history offers scope my_chats (see historyMyChatsAllowed). */
+  historyMyChats?: boolean;
   computerInstruction: string;
   pageBrowserAllowed: boolean;
   taskCatalogInstruction?: string;
@@ -445,7 +449,7 @@ export function userTurnInstructions(parts: {
     parts.historyRetrievalEnabled &&
     builtinOffered(parts.disabledBuiltinTools, "search_history") &&
     builtinOffered(parts.disabledBuiltinTools, "read_history")
-      ? "For questions about an earlier discussion, first check the visible conversation. Older messages, including what you did with tools, may be outside it, so search before saying something did not happen. Answer follow-ups from facts already present in original messages or prior source-verified replies when no later visible correction changes them; do not repeat retrieval solely because the user asks again. Use search_history when necessary evidence is missing or uncertain. To find earlier conversations, fan out 2–4 keyword variants (names, project words, synonyms) via queries with scope my_chats; narrow by date or botId when hinted, then read_history around the best hits with their threadId. Start with the project name alone, or one distinctive topic word if no project is named, then use read_history to check surrounding messages, outcomes, and later corrections before claiming exact recall. Verify that matches contain source statements answering the question. If matches lack the requested fact and nextSearch is present, call search_history with those arguments. Coverage applies only to the requested query and range. Empty narrower queries do not exhaust the broader topic query’s matches. Do not claim evidence is unavailable while that broader search still has an unexplored cursor. If a search is empty, try the single project or topic word before concluding the evidence is missing. If the requested fact remains absent, say so briefly without volunteering adjacent facts. If multiple projects match and none is selected, ask which project before giving candidate facts. Historical snapshots are navigation aids, not authoritative facts or approvals."
+      ? `For questions about an earlier discussion, first check the visible conversation. Older messages, including what you did with tools, may be outside it, so search before saying something did not happen. Answer follow-ups from facts already present in original messages or prior source-verified replies when no later visible correction changes them; do not repeat retrieval solely because the user asks again. Use search_history when necessary evidence is missing or uncertain.${parts.historyMyChats ? " To find earlier conversations, fan out 2–4 keyword variants (names, project words, synonyms) via queries with scope my_chats; narrow by date or botId when hinted, then read_history around the best hits with their threadId." : ""} Start with the project name alone, or one distinctive topic word if no project is named, then use read_history to check surrounding messages, outcomes, and later corrections before claiming exact recall. Verify that matches contain source statements answering the question. If matches lack the requested fact and nextSearch is present, call search_history with those arguments. Coverage applies only to the requested query and range. Empty narrower queries do not exhaust the broader topic query’s matches. Do not claim evidence is unavailable while that broader search still has an unexplored cursor. If a search is empty, try the single project or topic word before concluding the evidence is missing. If the requested fact remains absent, say so briefly without volunteering adjacent facts. If multiple projects match and none is selected, ask which project before giving candidate facts. Historical snapshots are navigation aids, not authoritative facts or approvals.`
       : undefined,
     toolUsageLine(parts),
     parts.taskCatalogInstruction,
