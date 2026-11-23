@@ -16,12 +16,18 @@ import {
 import { computerPreviewPlaceholder } from "@rakazo/i18n/computer-preview";
 import { computerLabel } from "@rakazo/i18n/computer-usage";
 import { useLocalSearchParams, useRouter } from "expo-router";
+import {
+  lockAsync,
+  OrientationLock,
+  unlockAsync,
+} from "expo-screen-orientation";
 import type { RefObject } from "react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
   AppState,
   Modal,
+  Platform,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -29,7 +35,12 @@ import {
   useWindowDimensions,
   View,
 } from "react-native";
-import { KeyboardAvoidingView } from "react-native-keyboard-controller";
+import {
+  AndroidSoftInputModes,
+  KeyboardAvoidingView,
+  KeyboardController,
+  useKeyboardState,
+} from "react-native-keyboard-controller";
 import {
   initialWindowMetrics,
   SafeAreaProvider,
@@ -80,7 +91,10 @@ export default function Computer() {
   const windowSize = useWindowDimensions();
   const stacked = stacksAtTextScale(windowSize.fontScale);
   const folds = useFoldRegions();
-  const { botId, name: nameParam } = useLocalSearchParams<{ botId?: string; name?: string }>();
+  const { botId, name: nameParam } = useLocalSearchParams<{
+    botId?: string;
+    name?: string;
+  }>();
   const name = displayName(nameParam, t`Bot`);
   const foreground = useAppForeground();
   const {
@@ -105,6 +119,12 @@ export default function Computer() {
   const [switchingCount, setSwitchingCount] = useState(0);
   const switching = switchingCount > 0;
   const [computerOpen, setComputerOpen] = useState(false);
+  // The full window's desktop, turned to fill the display and watched from its short edge.
+  const [screenRotated, setScreenRotated] = useState(false);
+  const [screenBox, setScreenBox] = useState<{
+    width: number;
+    height: number;
+  } | null>(null);
   // The keyboard closes on the Hand back tap, not when the server answers.
   const [releasing, setReleasing] = useState(false);
   const autoBooted = useRef<string | null>(null);
@@ -123,7 +143,9 @@ export default function Computer() {
   // Every screen URL read rotates its token, so only a different stream earns a fresh load.
   // Clearing on a rotated token reloaded a screen this device cannot reach every few seconds,
   // and each reload blanked the preview in place of the error.
-  const embeddedScreenStream = embeddedScreenUrl ? screenStreamKey(embeddedScreenUrl) : null;
+  const embeddedScreenStream = embeddedScreenUrl
+    ? screenStreamKey(embeddedScreenUrl)
+    : null;
   useEffect(() => setScreenError(null), [embeddedScreenStream]);
   // Without a WebView a dropped URL never fails on its own, so say so instead of a dead preview.
   const unreachableScreen =
@@ -134,9 +156,26 @@ export default function Computer() {
     computer.controlBotId === botId &&
     !computer.controlledByOther;
   // Propped open like a laptop, the desktop stays above the fold and the keys go below it.
-  const tabletop = hasControl ? tabletopLayout(windowSize.width, windowSize.height, folds) : null;
+  const tabletop = hasControl
+    ? tabletopLayout(windowSize.width, windowSize.height, folds)
+    : null;
+  const screenAspect =
+    computer?.screenWidth && computer?.screenHeight
+      ? computer.screenWidth / computer.screenHeight
+      : 16 / 10;
+  // The full window's desktop, turned to fill the display and watched from its short edge.
+  const screenTurned = computerOpen && screenRotated && !tabletop;
+  // Once the orientation lock takes hold the window is really landscape: the desktop
+  // shows every pixel at full height in the middle, flanked by its own controls.
+  const turnedLandscape =
+    screenTurned && screenBox != null && screenBox.width > screenBox.height;
+  const keyboardVisible = useKeyboardState((state) => state.isVisible);
+  const keyboardHeight = useKeyboardState((state) => state.height);
   const screenVisible =
-    computerOpen && computer?.state === "running" && Boolean(embeddedScreenUrl) && !screenError;
+    computerOpen &&
+    computer?.state === "running" &&
+    Boolean(embeddedScreenUrl) &&
+    !screenError;
   const loadedScreenUrl = nextLoadedScreenUrl(
     heldScreenUrl.current,
     embeddedScreenUrl,
@@ -162,12 +201,19 @@ export default function Computer() {
     const webView = screenWebViewRef.current;
     if (!webView) return;
     webView.injectJavaScript(computerKeyboardReadyProbe(String(gate.session)));
-  }, [computerOpen, hasControl, loadedScreenUrl, embeddedScreenUrl, keyboardSession]);
+  }, [
+    computerOpen,
+    hasControl,
+    loadedScreenUrl,
+    embeddedScreenUrl,
+    keyboardSession,
+  ]);
 
   function injectKeyboardCommands(commands: ComputerKeyboardCommand[]) {
     const webView = screenWebViewRef.current;
     if (!webView) return;
-    for (const command of commands) webView.injectJavaScript(computerKeyboardScript(command));
+    for (const command of commands)
+      webView.injectJavaScript(computerKeyboardScript(command));
   }
 
   const label = computerLabel(computer?.mode, name);
@@ -202,7 +248,8 @@ export default function Computer() {
 
   useEffect(() => {
     if (!botId || readyBotId !== botId || switching) return;
-    if (computer?.state === "booting" || computer?.state === "suspended") return;
+    if (computer?.state === "booting" || computer?.state === "suspended")
+      return;
     if (autoBooted.current === botId) return;
     autoBooted.current = botId;
     void bootComputer({
@@ -229,7 +276,9 @@ export default function Computer() {
   // commits, such as a suspended transition toward another bot that is then cancelled,
   // leaves the screen on screen with its budget.
   const screenReconnect = useMemo(() => createScreenReconnect(), [botId]);
-  const screenReconnectTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const screenReconnectTimer = useRef<
+    ReturnType<typeof setTimeout> | undefined
+  >(undefined);
   const screenReconnectWait = useRef<AbortController | null>(null);
   const currentScreenUrl = useRef<string | null>(null);
   currentScreenUrl.current = loadedScreenUrl ?? embeddedScreenUrl;
@@ -263,9 +312,11 @@ export default function Computer() {
         // Wait out an API that can't be reached, so the one reconnect isn't spent on it; the
         // reload then shows whatever the page answers.
         // Only the proxy answers probes; another screen is loaded again straight away.
-        const probe = url && isProxiedScreenPage(url) ? screenProbeUrl(url) : null;
+        const probe =
+          url && isProxiedScreenPage(url) ? screenProbeUrl(url) : null;
         void waitForScreenPage(
-          async (signal) => (probe ? screenPageStatus(probe, fetch, signal) : 200),
+          async (signal) =>
+            probe ? screenPageStatus(probe, fetch, signal) : 200,
           { signal: wait.signal },
         ).then((outcome) => {
           if (outcome === "cancelled") {
@@ -335,9 +386,10 @@ export default function Computer() {
   useEffect(() => {
     if (!heldBotId || !heldLeaseId) return;
     return () => {
-      void rpc("computer/release", { botId: heldBotId, leaseId: heldLeaseId }).catch(
-        () => undefined,
-      );
+      void rpc("computer/release", {
+        botId: heldBotId,
+        leaseId: heldLeaseId,
+      }).catch(() => undefined);
     };
   }, [heldBotId, heldLeaseId]);
 
@@ -360,8 +412,12 @@ export default function Computer() {
   }
 
   function dismissDiskWarning() {
-    setComputer((current) => current && { ...current, diskFullPercent: undefined });
-    void rpc("computer/dismissDiskWarning", { botId: botId ?? "" }).catch(() => undefined);
+    setComputer(
+      (current) => current && { ...current, diskFullPercent: undefined },
+    );
+    void rpc("computer/dismissDiskWarning", { botId: botId ?? "" }).catch(
+      () => undefined,
+    );
   }
 
   async function cleanUpDisk() {
@@ -401,7 +457,8 @@ export default function Computer() {
   }
 
   async function setComputerMode(mode: ComputerMode) {
-    if (!botId || !refreshController.isActive() || mode === computer?.mode) return;
+    if (!botId || !refreshController.isActive() || mode === computer?.mode)
+      return;
     const action = refreshController.beginAction();
     setSwitchingCount((count) => count + 1);
     setError(null);
@@ -413,7 +470,11 @@ export default function Computer() {
         });
       }
       if (!action.isActive()) return;
-      await rpc("bots/setComputer", { botId, mode }, { timeoutMs: COMPUTER_LIFECYCLE_TIMEOUT_MS });
+      await rpc(
+        "bots/setComputer",
+        { botId, mode },
+        { timeoutMs: COMPUTER_LIFECYCLE_TIMEOUT_MS },
+      );
       if (!action.isActive()) return;
       setComputer(null);
       setScreenUrl(null);
@@ -428,6 +489,27 @@ export default function Computer() {
     }
   }
 
+  // The rotated desktop is watched sideways, so the device itself turns with it: a real
+  // landscape orientation keeps the soft keyboard, the insets and the resize in the
+  // rotated frame instead of fighting them from portrait. The transform below only
+  // covers a modal that refuses to turn — Android dialog windows often stay portrait
+  // whatever the activity asks for.
+  useEffect(() => {
+    if (!screenTurned) return;
+    void lockAsync(OrientationLock.LANDSCAPE).catch(() => undefined);
+    if (Platform.OS === "android") {
+      // The keyboard must float over the turned desktop instead of resizing it to a
+      // sliver; the bar below rides above the floating keyboard.
+      KeyboardController.setInputMode(
+        AndroidSoftInputModes.SOFT_INPUT_ADJUST_NOTHING,
+      );
+    }
+    return () => {
+      if (Platform.OS === "android") KeyboardController.setDefaultMode();
+      void unlockAsync().catch(() => undefined);
+    };
+  }, [screenTurned]);
+
   const keyboardBar = hasControl ? (
     <ComputerKeyboardBar
       active={computerOpen && !releasing}
@@ -436,19 +518,37 @@ export default function Computer() {
       }}
     />
   ) : null;
+  // The same keys as a slim column that flanks the turned desktop.
+  const keyboardColumn = hasControl ? (
+    <ComputerKeyboardBar
+      vertical
+      active={computerOpen && !releasing}
+      onCommand={(command) => {
+        injectKeyboardCommands(keyboardGate.current.bridge.push(command));
+      }}
+    />
+  ) : null;
   const placeholder =
-    (computer?.state === "running" || !screenOriginError ? screenError : null) ??
+    (computer?.state === "running" || !screenOriginError
+      ? screenError
+      : null) ??
     (unreachableScreen
       ? t`Could not load the desktop. This device cannot reach the screen URL.`
       : computerPreviewPlaceholder(computer?.state, booting, "takeControl"));
   // Booting shows in the preview; the header and Back stay, and leaving lets the boot finish.
   const bootPending = booting || computer?.state === "booting";
   // Retrying cannot help once the hours are spent; only a plan change can.
-  const allowanceUsed = computer?.state !== "running" && isComputerAllowanceUsed(error);
-  const canRetry = !allowanceUsed && !bootPending && (bootFailed || computer?.state === "error");
+  const allowanceUsed =
+    computer?.state !== "running" && isComputerAllowanceUsed(error);
+  const canRetry =
+    !allowanceUsed &&
+    !bootPending &&
+    (bootFailed || computer?.state === "error");
   const screenRetry =
     unreachableScreen ||
-    (computer?.state === "running" && screenOriginError && Boolean(screenError));
+    (computer?.state === "running" &&
+      screenOriginError &&
+      Boolean(screenError));
   const retryScreenAction = screenRetry ? (
     <NativeActionButton
       style={{ marginBottom: 16 }}
@@ -474,19 +574,28 @@ export default function Computer() {
     >
       {canRetry && computer?.state !== "running" ? (
         <View style={{ gap: 8, marginBottom: 16 }}>
-          <Text style={{ color: tokens.destructive, fontSize: 17, fontWeight: "600" }}>
+          <Text
+            style={{
+              color: tokens.destructive,
+              fontSize: 17,
+              fontWeight: "600",
+            }}
+          >
             {t`Couldn't start the computer`}
           </Text>
           <Text style={{ color: tokens.mutedForeground }}>
             {t`Something went wrong while it was starting. Try again in a moment.`}
           </Text>
           {error ? (
-            <Text style={{ color: tokens.mutedForeground, fontSize: 13 }}>{error}</Text>
+            <Text style={{ color: tokens.mutedForeground, fontSize: 13 }}>
+              {error}
+            </Text>
           ) : null}
         </View>
       ) : error || canRetry ? (
         <Text style={{ color: tokens.mutedForeground, marginBottom: 12 }}>
-          {error ?? t`Something went wrong while it was starting. Try again in a moment.`}
+          {error ??
+            t`Something went wrong while it was starting. Try again in a moment.`}
         </Text>
       ) : null}
       {retryScreenAction}
@@ -506,9 +615,11 @@ export default function Computer() {
           size="default"
           style={{ marginBottom: 16 }}
           onPress={() =>
-            void bootComputer({ takeControl: false, showProgress: true, force: true }).catch(
-              () => undefined,
-            )
+            void bootComputer({
+              takeControl: false,
+              showProgress: true,
+              force: true,
+            }).catch(() => undefined)
           }
         />
       ) : null}
@@ -522,10 +633,17 @@ export default function Computer() {
         }}
       >
         {computerOpen ? (
-          <View style={{ flex: 1, alignItems: "center", justifyContent: "center" }}>
-            <Text style={{ color: tokens.mutedForeground }}>{t`Open in full window`}</Text>
+          <View
+            style={{ flex: 1, alignItems: "center", justifyContent: "center" }}
+          >
+            <Text
+              style={{ color: tokens.mutedForeground }}
+            >{t`Open in full window`}</Text>
           </View>
-        ) : foreground && computer?.state === "running" && embeddedScreenUrl && !screenError ? (
+        ) : foreground &&
+          computer?.state === "running" &&
+          embeddedScreenUrl &&
+          !screenError ? (
           <ScreenWebView
             key={screenReload}
             url={embeddedScreenUrl}
@@ -551,8 +669,12 @@ export default function Computer() {
               padding: 16,
             }}
           >
-            {bootPending ? <ActivityIndicator size="large" color={tokens.mutedForeground} /> : null}
-            <Text style={{ color: tokens.mutedForeground, textAlign: "center" }}>
+            {bootPending ? (
+              <ActivityIndicator size="large" color={tokens.mutedForeground} />
+            ) : null}
+            <Text
+              style={{ color: tokens.mutedForeground, textAlign: "center" }}
+            >
               {placeholder}
             </Text>
           </View>
@@ -608,11 +730,18 @@ export default function Computer() {
           }}
         >
           <Text
-            style={{ color: tokens.warning, ...(stacked ? { alignSelf: "stretch" } : { flex: 1 }) }}
+            style={{
+              color: tokens.warning,
+              ...(stacked ? { alignSelf: "stretch" } : { flex: 1 }),
+            }}
           >
             {t`Computer is ${ph({ percent: computer.diskFullPercent })}% full`}
           </Text>
-          <NativeActionButton label={t`Dismiss`} prominence="plain" onPress={dismissDiskWarning} />
+          <NativeActionButton
+            label={t`Dismiss`}
+            prominence="plain"
+            onPress={dismissDiskWarning}
+          />
           <NativeActionButton
             label={t`Clean up`}
             prominence="secondary"
@@ -633,134 +762,384 @@ export default function Computer() {
         visible={computerOpen}
         animationType="fade"
         presentationStyle="fullScreen"
-        supportedOrientations={["portrait", "landscape-left", "landscape-right"]}
+        supportedOrientations={[
+          "portrait",
+          "landscape-left",
+          "landscape-right",
+        ]}
         onRequestClose={() => setComputerOpen(false)}
       >
         <SafeAreaProvider initialMetrics={initialWindowMetrics}>
           <KeyboardAvoidingView
             behavior="height"
-            enabled={!tabletop}
+            enabled={!tabletop && !screenTurned}
             style={{ flex: 1, backgroundColor: tokens.background }}
           >
-            <SafeAreaView
-              edges={["top", "left", "right"]}
-              style={{
-                flexDirection: "row",
-                alignItems: "center",
-                justifyContent: "space-between",
-                gap: 12,
-                borderBottomWidth: iosAtLeast(26) ? 0 : 1,
-                borderBottomColor: tokens.border,
-                paddingHorizontal: 14,
-                paddingVertical: 4,
-              }}
-            >
-              <View
+            {turnedLandscape ? (
+              <SafeAreaView
+                edges={["top", "bottom", "left", "right"]}
                 style={{
                   flex: 1,
-                  minWidth: 0,
                   flexDirection: "row",
-                  alignItems: "center",
-                  gap: 8,
+                  backgroundColor: tokens.card,
                 }}
               >
-                <Text
-                  numberOfLines={1}
+                {/* The window's controls move into a side band the desktop cannot use. */}
+                <View style={styles.turnedBand}>
+                  <Text
+                    numberOfLines={3}
+                    style={[styles.turnedName, { color: tokens.foreground }]}
+                  >
+                    {label}
+                  </Text>
+                  {hasControl ? (
+                    <ComputerReleaseActions
+                      vertical
+                      takeoverRequested={computer?.takeoverRequested ?? false}
+                      onRelease={releaseComputer}
+                    />
+                  ) : (
+                    <NativeActionButton
+                      label={t`Take control`}
+                      prominence="secondary"
+                      size="compact"
+                      onPress={() =>
+                        void bootComputer({
+                          takeControl: true,
+                          showProgress: false,
+                        }).catch(() => undefined)
+                      }
+                    />
+                  )}
+                  <GlassIconButton
+                    accessibilityLabel={t`Upright screen`}
+                    onPress={() => setScreenRotated(false)}
+                    ios="rotate.left"
+                    android="phone-portrait-outline"
+                    size={40}
+                    iconSize={18}
+                  />
+                  <GlassIconButton
+                    accessibilityLabel={t`Close computer`}
+                    onPress={() => setComputerOpen(false)}
+                    ios="xmark"
+                    android="close"
+                    size={40}
+                    iconSize={18}
+                  />
+                </View>
+                <View
                   style={{
-                    flexShrink: 1,
-                    color: tokens.foreground,
-                    fontSize: 15.5,
-                    fontWeight: "500",
+                    flex: 1,
+                    backgroundColor: tokens.card,
+                    overflow: "hidden",
                   }}
-                >
-                  {label}
-                </Text>
-              </View>
-              <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
-                {hasControl ? (
-                  <ComputerReleaseActions
-                    takeoverRequested={computer?.takeoverRequested ?? false}
-                    onRelease={releaseComputer}
-                  />
-                ) : (
-                  <NativeActionButton
-                    label={t`Take control`}
-                    prominence="secondary"
-                    fill={false}
-                    style={{ alignSelf: "center" }}
-                    onPress={() =>
-                      void bootComputer({ takeControl: true, showProgress: false }).catch(
-                        () => undefined,
-                      )
-                    }
-                  />
-                )}
-                <GlassIconButton
-                  accessibilityLabel={t`Close computer`}
-                  onPress={() => setComputerOpen(false)}
-                  ios="xmark"
-                  android="close"
-                  size={36}
-                  iconSize={16}
-                />
-              </View>
-            </SafeAreaView>
-            {hasControl && computer?.shared ? (
-              <Text
-                testID="computer-shared-browser"
-                style={[styles.sharedBrowser, { color: tokens.mutedForeground }]}
-              >
-                {t`Sites you sign in to stay signed in for everyone in this space`}
-              </Text>
-            ) : null}
-            <View style={{ flex: 1, backgroundColor: tokens.card }}>
-              {foreground && loadedScreenUrl ? (
-                <ScreenWebView
-                  key={screenReload}
-                  url={loadedScreenUrl}
-                  interactive={hasControl}
-                  nativeKeyboard={hasControl}
-                  keyboardSession={keyboardSession}
-                  webViewRef={screenWebViewRef}
-                  onKeyboardMessage={(data) => {
-                    const gate = keyboardGate.current;
-                    if (!isComputerKeyboardReadyMessage(data, String(gate.session))) return;
-                    injectKeyboardCommands(gate.bridge.ready());
-                  }}
-                  onScreenState={onScreenState}
-                  onLoadStart={onScreenLoadStart}
-                  onRendererLost={() => void reloadScreen()}
-                  onError={() => {
-                    refreshController.invalidateScreen();
-                    setScreenOriginError(true);
-                    setScreenError(
-                      t`Could not load the desktop. This device cannot reach the screen URL.`,
+                  onLayout={(event) => {
+                    const { width, height } = event.nativeEvent.layout;
+                    setScreenBox((box) =>
+                      box && box.width === width && box.height === height
+                        ? box
+                        : { width, height },
                     );
                   }}
-                />
-              ) : (
-                <View
-                  style={{ flex: 1, alignItems: "center", justifyContent: "center", padding: 16 }}
                 >
-                  <Text style={{ color: tokens.mutedForeground, textAlign: "center" }}>
-                    {placeholder}
-                  </Text>
-                  {retryScreenAction}
+                  {foreground && loadedScreenUrl ? (
+                    <View
+                      style={
+                        screenBox
+                          ? fitFrame(screenBox, screenAspect)
+                          : { flex: 1 }
+                      }
+                    >
+                      <ScreenWebView
+                        key={screenReload}
+                        url={loadedScreenUrl}
+                        interactive={hasControl}
+                        nativeKeyboard={hasControl}
+                        keyboardSession={keyboardSession}
+                        webViewRef={screenWebViewRef}
+                        onKeyboardMessage={(data) => {
+                          const gate = keyboardGate.current;
+                          if (
+                            !isComputerKeyboardReadyMessage(
+                              data,
+                              String(gate.session),
+                            )
+                          )
+                            return;
+                          injectKeyboardCommands(gate.bridge.ready());
+                        }}
+                        onScreenState={onScreenState}
+                        onLoadStart={onScreenLoadStart}
+                        onRendererLost={() => void reloadScreen()}
+                        onError={() => {
+                          refreshController.invalidateScreen();
+                          setScreenOriginError(true);
+                          setScreenError(
+                            t`Could not load the desktop. This device cannot reach the screen URL.`,
+                          );
+                        }}
+                      />
+                    </View>
+                  ) : (
+                    <View
+                      style={{
+                        flex: 1,
+                        alignItems: "center",
+                        justifyContent: "center",
+                        padding: 16,
+                      }}
+                    >
+                      <Text
+                        style={{
+                          color: tokens.mutedForeground,
+                          textAlign: "center",
+                        }}
+                      >
+                        {placeholder}
+                      </Text>
+                      {retryScreenAction}
+                    </View>
+                  )}
                 </View>
-              )}
-            </View>
-            {tabletop ? (
-              // A fixed lower half, so the keyboard lifts the bar without pushing the desktop.
-              <View style={{ height: windowSize.height - tabletop.top, paddingTop: tabletop.gap }}>
-                <KeyboardAvoidingView
-                  behavior="height"
-                  style={{ flex: 1, justifyContent: "flex-end" }}
-                >
-                  {keyboardBar}
-                </KeyboardAvoidingView>
-              </View>
+                {keyboardColumn}
+              </SafeAreaView>
             ) : (
-              keyboardBar
+              <>
+                <SafeAreaView
+                  edges={["top", "left", "right"]}
+                  style={{
+                    flexDirection: "row",
+                    alignItems: "center",
+                    justifyContent: "space-between",
+                    gap: 12,
+                    borderBottomWidth: iosAtLeast(26) ? 0 : 1,
+                    borderBottomColor: tokens.border,
+                    paddingHorizontal: 14,
+                    paddingVertical: 4,
+                  }}
+                >
+                  <View
+                    style={{
+                      flex: 1,
+                      minWidth: 0,
+                      flexDirection: "row",
+                      alignItems: "center",
+                      gap: 8,
+                    }}
+                  >
+                    <Text
+                      numberOfLines={1}
+                      style={{
+                        flexShrink: 1,
+                        color: tokens.foreground,
+                        fontSize: 15.5,
+                        fontWeight: "500",
+                      }}
+                    >
+                      {label}
+                    </Text>
+                    {hasControl ? (
+                      <View
+                        style={{
+                          borderRadius: 999,
+                          backgroundColor: tokens.muted,
+                          paddingHorizontal: 9,
+                          paddingVertical: 3,
+                        }}
+                      >
+                        <Text
+                          numberOfLines={1}
+                          style={{ color: tokens.success, fontSize: 12 }}
+                        >
+                          {t`You have control`}
+                        </Text>
+                      </View>
+                    ) : null}
+                  </View>
+                  <View
+                    style={{
+                      flexDirection: "row",
+                      alignItems: "center",
+                      gap: 8,
+                    }}
+                  >
+                    {hasControl ? (
+                      <ComputerReleaseActions
+                        takeoverRequested={computer?.takeoverRequested ?? false}
+                        onRelease={releaseComputer}
+                      />
+                    ) : (
+                      <NativeActionButton
+                        label={t`Take control`}
+                        prominence="secondary"
+                        fill={false}
+                        style={{ alignSelf: "center" }}
+                        onPress={() =>
+                          void bootComputer({
+                            takeControl: true,
+                            showProgress: false,
+                          }).catch(() => undefined)
+                        }
+                      />
+                    )}
+                    <GlassIconButton
+                      accessibilityLabel={
+                        screenRotated ? t`Upright screen` : t`Rotate screen`
+                      }
+                      onPress={() => setScreenRotated((value) => !value)}
+                      ios={screenRotated ? "rotate.left" : "rotate.right"}
+                      android={
+                        screenRotated
+                          ? "phone-portrait-outline"
+                          : "phone-landscape-outline"
+                      }
+                      size={36}
+                      iconSize={16}
+                    />
+                    <GlassIconButton
+                      accessibilityLabel={t`Close computer`}
+                      onPress={() => setComputerOpen(false)}
+                      ios="xmark"
+                      android="close"
+                      size={36}
+                      iconSize={16}
+                    />
+                  </View>
+                </SafeAreaView>
+                {hasControl && computer?.shared ? (
+                  <Text
+                    testID="computer-shared-browser"
+                    style={[
+                      styles.sharedBrowser,
+                      { color: tokens.mutedForeground },
+                    ]}
+                  >
+                    {t`Sites you sign in to stay signed in for everyone in this space`}
+                  </Text>
+                ) : null}
+                <View
+                  style={{
+                    flex: 1,
+                    backgroundColor: tokens.card,
+                    overflow: "hidden",
+                  }}
+                  onLayout={(event) => {
+                    const { width, height } = event.nativeEvent.layout;
+                    setScreenBox((box) =>
+                      box && box.width === width && box.height === height
+                        ? box
+                        : { width, height },
+                    );
+                  }}
+                >
+                  {foreground && loadedScreenUrl ? (
+                    <View
+                      style={
+                        screenRotated &&
+                        screenBox &&
+                        screenBox.height > screenBox.width
+                          ? {
+                              // A modal that is still portrait — mid-flip or refusing the
+                              // orientation lock — lays the frame out swapped and turned with
+                              // a native transform, so touch keeps mapping correctly.
+                              position: "absolute",
+                              top: (screenBox.height - screenBox.width) / 2,
+                              left: (screenBox.width - screenBox.height) / 2,
+                              width: screenBox.height,
+                              height: screenBox.width,
+                              transform: [{ rotate: "90deg" }],
+                            }
+                          : { flex: 1 }
+                      }
+                    >
+                      <ScreenWebView
+                        key={screenReload}
+                        url={loadedScreenUrl}
+                        interactive={hasControl}
+                        nativeKeyboard={hasControl}
+                        keyboardSession={keyboardSession}
+                        webViewRef={screenWebViewRef}
+                        onKeyboardMessage={(data) => {
+                          const gate = keyboardGate.current;
+                          if (
+                            !isComputerKeyboardReadyMessage(
+                              data,
+                              String(gate.session),
+                            )
+                          )
+                            return;
+                          injectKeyboardCommands(gate.bridge.ready());
+                        }}
+                        onScreenState={onScreenState}
+                        onLoadStart={onScreenLoadStart}
+                        onRendererLost={() => void reloadScreen()}
+                        onError={() => {
+                          refreshController.invalidateScreen();
+                          setScreenOriginError(true);
+                          setScreenError(
+                            t`Could not load the desktop. This device cannot reach the screen URL.`,
+                          );
+                        }}
+                      />
+                    </View>
+                  ) : (
+                    <View
+                      style={{
+                        flex: 1,
+                        alignItems: "center",
+                        justifyContent: "center",
+                        padding: 16,
+                      }}
+                    >
+                      <Text
+                        style={{
+                          color: tokens.mutedForeground,
+                          textAlign: "center",
+                        }}
+                      >
+                        {placeholder}
+                      </Text>
+                      {retryScreenAction}
+                    </View>
+                  )}
+                </View>
+                {tabletop ? (
+                  // A fixed lower half, so the keyboard lifts the bar without pushing the desktop.
+                  <View
+                    style={{
+                      height: windowSize.height - tabletop.top,
+                      paddingTop: tabletop.gap,
+                    }}
+                  >
+                    <KeyboardAvoidingView
+                      behavior="height"
+                      style={{ flex: 1, justifyContent: "flex-end" }}
+                    >
+                      {keyboardBar}
+                    </KeyboardAvoidingView>
+                  </View>
+                ) : screenTurned && keyboardBar ? (
+                  // The turned desktop fills the window and the keyboard floats over it, so the
+                  // bar rides above the keyboard instead of pushing anything around.
+                  <View
+                    pointerEvents="box-none"
+                    style={{
+                      position: "absolute",
+                      left: 0,
+                      right: 0,
+                      bottom:
+                        keyboardVisible && keyboardHeight > 0
+                          ? keyboardHeight
+                          : 0,
+                    }}
+                  >
+                    {keyboardBar}
+                  </View>
+                ) : (
+                  keyboardBar
+                )}
+              </>
             )}
           </KeyboardAvoidingView>
         </SafeAreaProvider>
@@ -769,29 +1148,69 @@ export default function Computer() {
   );
 }
 
+/** A screen frame that fits the box in the framebuffer's own aspect: every pixel of the
+ * desktop stays visible, centered in whatever width the bands leave for it. */
+function fitFrame(
+  box: { width: number; height: number },
+  aspect: number,
+): {
+  position: "absolute";
+  top: number;
+  left: number;
+  width: number;
+  height: number;
+} {
+  let width = box.height * aspect;
+  let height = box.height;
+  if (width > box.width) {
+    width = box.width;
+    height = width / aspect;
+  }
+  return {
+    position: "absolute",
+    top: (box.height - height) / 2,
+    left: (box.width - width) / 2,
+    width,
+    height,
+  };
+}
+
 function ComputerReleaseActions({
   takeoverRequested,
   onRelease,
+  vertical = false,
 }: {
   takeoverRequested: boolean;
   onRelease: (reason?: ComputerReleaseReason) => Promise<void>;
+  /** Stacked for the slim band beside a turned desktop. */
+  vertical?: boolean;
 }) {
   const { t } = useLingui();
-  const actions: Array<{ label: string; reason?: ComputerReleaseReason; primary?: boolean }> =
-    takeoverRequested
-      ? [
-          { label: t`Skip`, reason: "skipped" },
-          { label: t`I’m done`, reason: "done", primary: true },
-        ]
-      : [{ label: t`Hand back control` }];
+  const actions: Array<{
+    label: string;
+    reason?: ComputerReleaseReason;
+    primary?: boolean;
+  }> = takeoverRequested
+    ? [
+        { label: t`Skip`, reason: "skipped" },
+        { label: t`I’m done`, reason: "done", primary: true },
+      ]
+    : [{ label: t`Hand back control` }];
   return (
-    <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+    <View
+      style={
+        vertical
+          ? { flexDirection: "column", alignSelf: "stretch", gap: 8 }
+          : { flexDirection: "row", alignItems: "center", gap: 8 }
+      }
+    >
       {actions.map((action) => (
         <NativeActionButton
           key={action.label}
           label={action.label}
           prominence={action.primary ? "primary" : "secondary"}
           fill={false}
+          size={vertical ? "compact" : undefined}
           style={{ alignSelf: "center" }}
           onPress={() => void onRelease(action.reason)}
         />
@@ -854,7 +1273,9 @@ function ScreenWebView({
         nativeKeyboard ? NATIVE_COMPUTER_KEYBOARD_BOOT : undefined
       }
       injectedJavaScript={
-        nativeKeyboard && keyboardSession ? computerKeyboardReadyProbe(keyboardSession) : undefined
+        nativeKeyboard && keyboardSession
+          ? computerKeyboardReadyProbe(keyboardSession)
+          : undefined
       }
       onMessage={(event) => {
         const state = fromScreenPage(
@@ -887,8 +1308,8 @@ function ScreenWebView({
       originWhitelist={["*"]}
       mixedContentMode="always"
       setSupportMultipleWindows={false}
-      // The screen page ships with the computer image; a cached copy keeps a stale
-      // trackpad UI alive across container updates.
+      // The screen page and its scripts update with the computer image; a cached
+      // copy would keep a stale trackpad UI alive across container updates.
       cacheEnabled={false}
       scrollEnabled={false}
       overScrollMode="never"
@@ -902,4 +1323,12 @@ function ScreenWebView({
 
 const styles = StyleSheet.create({
   sharedBrowser: { fontSize: 12, paddingHorizontal: 14, paddingBottom: 4 },
+  turnedBand: {
+    width: 88,
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 10,
+    paddingVertical: 10,
+  },
+  turnedName: { fontSize: 11, fontWeight: "500", textAlign: "center" },
 });
